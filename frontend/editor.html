@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <title>MLGR — Редактор</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- ════════════════ SIDEBAR ════════════════ -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="logo-mark">⚗️</div>
+      <div>
+        <div class="logo-name">MLGR</div>
+        <div class="logo-sub">Lab Reports</div>
+      </div>
+    </div>
+
+    <nav class="nav-section">
+      <span class="nav-label">Навігація</span>
+      <a href="dashboard.html" class="nav-link">
+        <span class="nav-ico">📋</span> Мої звіти
+      </a>
+      <a href="editor.html" class="nav-link active">
+        <span class="nav-ico">✏️</span> Редактор
+      </a>
+    </nav>
+
+    <div class="sb-footer">
+      <div class="user-row">
+        <div class="user-ava" id="sb-avatar">?</div>
+        <div class="user-email" id="sb-email"></div>
+      </div>
+      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">Вийти</button>
+    </div>
+  </aside>
+
+  <!-- ════════════════ MAIN ════════════════ -->
+  <main class="main">
+
+    <!-- header -->
+    <div class="page-hdr">
+      <div>
+        <h1 class="page-title" id="editor-heading">Новий звіт</h1>
+        <p class="page-subtitle">Заповни поля та згенеруй висновок за допомогою AI</p>
+      </div>
+      <div class="flex gap-8">
+        <button id="btn-save" class="btn btn-secondary">💾 Зберегти</button>
+        <button id="btn-generate" class="btn btn-primary">⬇ Генерувати .docx</button>
+      </div>
+    </div>
+
+    <!-- progress bar (hidden until generating) -->
+    <div id="gen-progress" class="hidden" style="margin-bottom: 18px;">
+      <div class="progress-wrap"><div class="progress-fill" id="gen-fill" style="width:0%"></div></div>
+      <p class="progress-lbl" id="gen-label">Генеруємо документ...</p>
+    </div>
+
+    <!-- two-column layout -->
+    <div class="editor-layout">
+
+      <!-- ── LEFT COLUMN ── -->
+      <div class="editor-col">
+
+        <!-- Basic info -->
+        <div class="card panel">
+          <div class="panel-head">
+            <div class="panel-title"><span>📝</span> Основна інформація</div>
+          </div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label for="f-title">Назва роботи *</label>
+              <input id="f-title" type="text" placeholder="Лабораторна робота №1 — Дослідження...">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="f-discipline">Дисципліна</label>
+                <input id="f-discipline" type="text" placeholder="Наприклад: Алгоритми та структури даних">
+              </div>
+              <div class="form-group">
+                <label for="f-group">Група</label>
+                <input id="f-group" type="text" placeholder="КІТІ-23-1">
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="f-teacher">Викладач</label>
+              <input id="f-teacher" type="text" placeholder="Іванов І.І.">
+            </div>
+            <div class="form-group">
+              <label for="f-goal">Мета роботи</label>
+              <textarea id="f-goal" rows="3" placeholder="Метою даної роботи є дослідження..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sections -->
+        <div class="card panel">
+          <div class="panel-head">
+            <div class="panel-title"><span>📑</span> Розділи</div>
+            <button id="btn-add-sec" class="btn btn-secondary btn-sm">+ Розділ</button>
+          </div>
+          <div class="panel-body">
+            <div id="sections-container" class="form-stack"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── RIGHT COLUMN (AI panel) ── -->
+      <div class="ai-panel">
+
+        <!-- conclusion streaming -->
+        <div class="card panel">
+          <div class="panel-head">
+            <div class="panel-title"><span>✨</span> AI Висновок</div>
+            <span class="badge badge-purple">GPT-4o</span>
+          </div>
+          <div class="panel-body">
+            <p class="text-sm text-muted">
+              AI проаналізує мету та розділи роботи і згенерує висновок у стилі ХНУРЕ в реальному часі.
+            </p>
+            <div id="ai-output" class="ai-output placeholder">
+              Натисни кнопку нижче, щоб згенерувати висновок...
+            </div>
+            <button id="btn-conclusion" class="btn btn-primary btn-full">
+              ✨ Згенерувати висновок
+            </button>
+          </div>
+        </div>
+
+        <!-- quick tips -->
+        <div class="card panel">
+          <div class="panel-head">
+            <div class="panel-title"><span>💡</span> Підказки</div>
+          </div>
+          <div class="panel-body">
+            <div class="info-box">Спочатку збережи звіт — тоді будуть доступні завантаження скріншотів та генерація AI.</div>
+            <ul class="text-sm text-muted" style="padding-left:18px; display:flex; flex-direction:column; gap:6px; line-height:1.6">
+              <li>Заповни <strong style="color:var(--text)">всі основні поля</strong> для кращого висновку від AI</li>
+              <li>Додай код у кожен розділ — він потрапить у документ у форматі моноширинного шрифту</li>
+              <li>Скріншоти підписуються автоматично за порядком розділів</li>
+              <li>«Генерувати .docx» зберігає звіт і запускає Celery задачу</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <title>MLGR — Дашборд</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- ════════════════ SIDEBAR ════════════════ -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="logo-mark">⚗️</div>
+      <div>
+        <div class="logo-name">MLGR</div>
+        <div class="logo-sub">Lab Reports</div>
+      </div>
+    </div>
+
+    <nav class="nav-section">
+      <span class="nav-label">Навігація</span>
+      <a href="dashboard.html" class="nav-link active">
+        <span class="nav-ico">📋</span> Мої звіти
+      </a>
+      <a href="editor.html" class="nav-link">
+        <span class="nav-ico">✏️</span> Новий звіт
+      </a>
+    </nav>
+
+    <div class="sb-footer">
+      <div class="user-row">
+        <div class="user-ava" id="sb-avatar">?</div>
+        <div class="user-email" id="sb-email"></div>
+      </div>
+      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">Вийти</button>
+    </div>
+  </aside>
+
+  <!-- ════════════════ MAIN ════════════════ -->
+  <main class="main">
+
+    <!-- header -->
+    <div class="page-hdr">
+      <div>
+        <h1 class="page-title">Мої звіти</h1>
+        <p class="page-subtitle">Всі лабораторні роботи в одному місці</p>
+      </div>
+      <button id="btn-new" class="btn btn-primary btn-lg">
+        ✦ Новий звіт
+      </button>
+    </div>
+
+    <!-- stats -->
+    <div class="stats-bar">
+      <div class="card stat-card">
+        <div class="stat-ico">📄</div>
+        <div class="stat-val" id="stat-total">—</div>
+        <div class="stat-lbl">Всього звітів</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-ico">📅</div>
+        <div class="stat-val" id="stat-month">—</div>
+        <div class="stat-lbl">Цього місяця</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-ico">🎓</div>
+        <div class="stat-val" id="stat-discs">—</div>
+        <div class="stat-lbl">Дисциплін</div>
+      </div>
+    </div>
+
+    <!-- search + grid -->
+    <div class="toolbar">
+      <input id="search-input" type="search" placeholder="🔍  Пошук за назвою або дисципліною..." style="max-width:310px">
+    </div>
+
+    <div id="reports-grid" class="reports-grid">
+      <div class="empty-state">
+        <div class="empty-ico">⏳</div>
+        <h3>Завантажуємо...</h3>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
