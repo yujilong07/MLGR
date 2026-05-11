@@ -1,8 +1,10 @@
 from fastapi import FastAPI
+from app.routes.auth import auth_router
 
-app = FastAPI(title="MLGR", version="0.1.0")
+app = FastAPI(title="Lab Report Generator")
 
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
 
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok"}
