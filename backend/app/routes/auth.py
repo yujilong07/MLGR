@@ -4,6 +4,7 @@ from app.database import get_session
 from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, Token
 from app.services.auth_service import hash_password, verify_password, create_access_token
+from fastapi.security import OAuth2PasswordRequestForm
 
 auth_router = APIRouter()
 
@@ -23,11 +24,11 @@ async def create_user(user_data: UserCreate, session: Session = Depends(get_sess
     return new_user
 
 @auth_router.post('/login', response_model=Token, status_code=status.HTTP_200_OK)
-async def login(user_data: UserCreate, session: Session = Depends(get_session)):
-    user_exists = session.exec(select(User).where(User.email == user_data.email)).first()
-    if not user_exists:
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
+    user = session.exec(select(User).where(User.email == form_data.username)).first()
+    if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if not verify_password(user_data.password, user_exists.hashed_password):
+    if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
-    access_token = create_access_token(data={"email": user_exists.email})
+    access_token = create_access_token(data={"email": user.email})
     return Token(access_token=access_token, token_type="bearer")

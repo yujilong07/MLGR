@@ -8,7 +8,7 @@ from app.services.auth_service import get_current_user
 
 reports_router = APIRouter()
 
-@reports_router.post('/reports', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+@reports_router.post('/', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 async def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     new_report = Report(
         user_id=current_user.id,
@@ -25,19 +25,19 @@ async def create_report(report_data: ReportCreate, current_user: User = Depends(
     session.refresh(new_report)
     return new_report
 
-@reports_router.get('/reports', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
+@reports_router.get('/', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
 async def get_reports(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     reports = session.exec(select(Report).where(Report.user_id == current_user.id)).all()
     return reports
 
-@reports_router.get('/reports/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
+@reports_router.get('/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
 async def get_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return report
 
-@reports_router.patch('/reports/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
+@reports_router.patch('/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
 async def update_report_by_id(id: int, report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
@@ -53,7 +53,7 @@ async def update_report_by_id(id: int, report_data: ReportCreate, current_user: 
     session.refresh(report)
     return report
 
-@reports_router.delete('/reports/{id}', status_code=status.HTTP_204_NO_CONTENT)
+@reports_router.delete('/{id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
