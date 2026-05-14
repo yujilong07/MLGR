@@ -1,0 +1,63 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+from app.database import get_session
+from app.models.report import Report
+from app.models.user import User
+from app.schemas.report import ReportCreate, ReportResponse
+from app.services.auth_service import get_current_user
+
+reports_router = APIRouter()
+
+@reports_router.post('/reports', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+async def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    new_report = Report(
+        user_id=current_user.id,
+        title=report_data.title,
+        discipline=report_data.discipline,
+        teacher=report_data.teacher,
+        group=report_data.group,
+        goal=report_data.goal,
+        sections=report_data.sections,
+        conclusion=report_data.conclusion
+    )
+    session.add(new_report)
+    session.commit()
+    session.refresh(new_report)
+    return new_report
+
+@reports_router.get('/reports', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
+async def get_reports(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    reports = session.exec(select(Report).where(Report.user_id == current_user.id)).all()
+    return reports
+
+@reports_router.get('/reports/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
+async def get_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return report
+
+@reports_router.patch('/reports/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
+async def update_report_by_id(id: int, report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    report.title = report_data.title
+    report.discipline = report_data.discipline
+    report.teacher = report_data.teacher
+    report.group = report_data.group
+    report.goal = report_data.goal
+    report.sections = report_data.sections
+    report.conclusion = report_data.conclusion
+    session.commit()
+    session.refresh(report)
+    return report
+
+@reports_router.delete('/reports/{id}', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    session.delete(report)
+    session.commit()
+    return None
