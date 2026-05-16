@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.report import Report
 from app.models.user import User
-from app.schemas.report import ReportCreate, ReportResponse
+from app.schemas.report import ReportCreate, ReportUpdate, ReportResponse
 from app.services.auth_service import get_current_user
 
 reports_router = APIRouter()
@@ -38,17 +38,15 @@ async def get_report_by_id(id: int, current_user: User = Depends(get_current_use
     return report
 
 @reports_router.patch('/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
-async def update_report_by_id(id: int, report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+async def update_report_by_id(id: int, report_data: ReportUpdate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    report.title = report_data.title
-    report.discipline = report_data.discipline
-    report.teacher = report_data.teacher
-    report.group = report_data.group
-    report.goal = report_data.goal
-    report.sections = report_data.sections
-    report.conclusion = report_data.conclusion
+    update_fields = report_data.model_dump(exclude_unset=True)
+    for field, value in update_fields.items():
+        setattr(report, field, value)
+    from datetime import datetime, timezone
+    report.updated_at = datetime.now(timezone.utc)
     session.commit()
     session.refresh(report)
     return report
