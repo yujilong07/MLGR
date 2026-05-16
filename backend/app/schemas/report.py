@@ -8,8 +8,17 @@ class ReportCreate(BaseModel):
     teacher : str
     group: str
     goal: str
-    sections : Optional[dict] 
-    conclusion : Optional[str] 
+    sections : Optional[dict]
+    conclusion : Optional[str]
+
+class ReportUpdate(BaseModel):
+    title: Optional[str] = None
+    discipline: Optional[str] = None
+    teacher: Optional[str] = None
+    group: Optional[str] = None
+    goal: Optional[str] = None
+    sections: Optional[dict] = None
+    conclusion: Optional[str] = None
 
 class ReportResponse(BaseModel):
     id: int
