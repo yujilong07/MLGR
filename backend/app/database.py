@@ -3,7 +3,7 @@ from app.config import settings
 
 DATABASE_URL = settings.database_url
 # default
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 def get_session():
     with Session(engine) as session:
