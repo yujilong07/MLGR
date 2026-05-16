@@ -24,7 +24,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=60)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, ALGORITHM)
 
@@ -32,6 +32,10 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     session: Session = Depends(get_session)
 ):
+    from app.services.cache_service import get_cached
+    if get_cached(f"blacklist:{token}"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("email")
@@ -39,8 +43,8 @@ def get_current_user(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
+
     user = session.exec(select(User).where(User.email == email)).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return user
