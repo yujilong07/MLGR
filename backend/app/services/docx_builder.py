@@ -4,6 +4,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from datetime import datetime
+import os
 
 
 def set_font(run, size=14, bold=False):
@@ -185,8 +186,6 @@ def add_image(document, image_path, image_number, caption_text):
     return caption
 
 def build_report_docx(report, student_name=""):
-    import tempfile
-
     document = create_base_doc()
     add_title_page(document, report, student_name)
     add_table_of_contents(document)
@@ -202,7 +201,8 @@ def build_report_docx(report, student_name=""):
     add_heading(document, "Висновки")
     add_paragraph_text(document, report.conclusion or "")
 
-    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-        path = tmp.name
+    output_dir = "/app/generated"
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"report_{report.id}.docx")
     document.save(path)
     return path

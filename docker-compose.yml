@@ -6,6 +6,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - generated_files:/app/generated
     env_file:
       - ./backend/.env
     depends_on:
@@ -19,6 +20,7 @@ services:
     command: celery -A app.tasks worker --loglevel=info
     volumes:
       - ./backend:/app
+      - generated_files:/app/generated
     env_file:
       - ./backend/.env
     depends_on:
@@ -50,3 +52,4 @@ services:
 
 volumes:
   postgres_data:
+  generated_files:
