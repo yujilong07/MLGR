@@ -185,7 +185,7 @@ def add_image(document, image_path, image_number, caption_text):
     set_font(caption_run)
     return caption
 
-def build_report_docx(report, student_name=""):
+def build_report_docx(report, images=None, student_name=""):
     document = create_base_doc()
     add_title_page(document, report, student_name)
     add_table_of_contents(document)
@@ -194,9 +194,22 @@ def build_report_docx(report, student_name=""):
     add_paragraph_text(document, report.goal or "")
 
     if report.sections:
-        for title, content in report.sections.items():
-            add_heading(document, title)
-            add_paragraph_text(document, content or "")
+        images_by_section = {}
+        if images:
+            for img in images:
+                images_by_section.setdefault(img.section_path, []).append(img)
+
+        image_counter = 1
+        for section_title, subsections in report.sections.items():
+            add_heading(document, section_title, level=1)
+            for subsection_title, content in subsections.items():
+                add_heading(document, subsection_title, level=2)
+                add_paragraph_text(document, content or "")
+                for img in images_by_section.get(subsection_title, []):
+                    img_path = os.path.join("/app/uploads", img.filename)
+                    if os.path.exists(img_path):
+                        add_image(document, img_path, image_counter, img.caption)
+                        image_counter += 1
 
     add_heading(document, "Висновки")
     add_paragraph_text(document, report.conclusion or "")

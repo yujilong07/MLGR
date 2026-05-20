@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlmodel import Session, select
 from app.database import get_session
-from app.models.report import Report
+from app.models.report import Report, ReportImage
 from app.models.user import User
 from app.schemas.report import ReportCreate, ReportUpdate, ReportResponse
 from app.services.auth_service import get_current_user
@@ -59,3 +61,33 @@ async def delete_report_by_id(id: int, current_user: User = Depends(get_current_
     session.delete(report)
     session.commit()
     return None
+
+@reports_router.post('/{id}/images', status_code=status.HTTP_201_CREATED)
+async def upload_image(
+    id: int,
+    file: UploadFile = File(...),
+    caption: str = Form(...),
+    section_path: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    ext = file.filename.split('.')[-1]
+    filename = f"{uuid.uuid4()}.{ext}"
+    path = os.path.join("/app/uploads", filename)
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    image = ReportImage(
+        report_id=id,
+        filename=filename,
+        caption=caption,
+        section_path=section_path
+    )
+    session.add(image)
+    session.commit()
+    session.refresh(image)
+    return {"id": image.id, "filename": image.filename, "caption": image.caption}
