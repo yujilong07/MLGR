@@ -1,3 +1,4 @@
+import structlog
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,8 @@ from app.models.user import User
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, select
+
+logger = structlog.get_logger().bind(service="auth")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"])
@@ -34,6 +37,7 @@ def get_current_user(
 ):
     from app.services.cache_service import get_cached
     if get_cached(f"blacklist:{token}"):
+        logger.warning("blacklisted_token_used")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
 
     try:
