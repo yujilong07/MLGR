@@ -4,14 +4,19 @@ setup_logging()
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 from app.routes.auth import auth_router
 from app.routes.reports import reports_router
 from app.routes.generate import generate_router
+from app.limiter import limiter
 import structlog
 
 logger = structlog.get_logger().bind(service="app")
 
 app = FastAPI(title="Lab Report Generator")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.exception_handler(Exception)

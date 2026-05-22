@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
+from app.limiter import limiter, get_user_email
 
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -30,7 +31,8 @@ class SectionTextRequest(BaseModel):
 generate_router = APIRouter()
 
 @generate_router.get('/reports/{id}/stream-conclusion')
-async def stream_conclusion_endpoint(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+@limiter.limit("10/minute", key_func=get_user_email)
+async def stream_conclusion_endpoint(request: Request, id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     import asyncio
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
@@ -60,7 +62,8 @@ async def stream_conclusion_endpoint(id: int, current_user: User = Depends(get_c
 
 
 @generate_router.post('/reports/{id}/generate-introduction')
-async def generate_introduction_endpoint(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+@limiter.limit("10/minute", key_func=get_user_email)
+async def generate_introduction_endpoint(request: Request, id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
@@ -78,7 +81,8 @@ async def generate_introduction_endpoint(id: int, current_user: User = Depends(g
 
 
 @generate_router.post('/reports/{id}/improve-section')
-async def improve_section_endpoint(id: int, body: SectionTextRequest, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+@limiter.limit("10/minute", key_func=get_user_email)
+async def improve_section_endpoint(request: Request, id: int, body: SectionTextRequest, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=404, detail="Not found")

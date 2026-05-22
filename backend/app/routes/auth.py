@@ -1,5 +1,5 @@
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 from app.database import get_session
@@ -7,6 +7,7 @@ from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, Token
 from app.services.auth_service import hash_password, verify_password, create_access_token, get_current_user, oauth2_scheme
 from app.services.cache_service import set_cached
+from app.limiter import limiter
 
 logger = structlog.get_logger().bind(service="auth")
 
@@ -37,7 +38,8 @@ async def create_user(user_data: UserCreate, session: Session = Depends(get_sess
 
 
 @auth_router.post('/login', response_model=Token, status_code=status.HTTP_200_OK)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
+@limiter.limit("5/minute")
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
     user = session.exec(
         select(User).where((User.email == form_data.username) | (User.username == form_data.username))
     ).first()
