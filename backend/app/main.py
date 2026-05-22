@@ -47,6 +47,9 @@ app.include_router(reports_router, prefix="/reports", tags=["report"])
 app.include_router(generate_router, tags=["generate"])
 app.include_router(upload_router, tags=["upload"])
 
+import os
+os.makedirs("/app/uploads", exist_ok=True)
+os.makedirs("/app/generated", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 
 
