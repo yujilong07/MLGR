@@ -6,6 +6,7 @@ from sqlmodel.pool import StaticPool
 
 from app.main import app
 from app.database import get_session
+from app.limiter import limiter
 
 from app.models.user import User
 from app.models.report import Report, ReportImage
@@ -40,9 +41,11 @@ def client_fixture(session):
         return session
     
     app.dependency_overrides[get_session] = get_session_override
+    limiter.enabled = False
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+    limiter.enabled = True
 
 
 # Reports fixture
