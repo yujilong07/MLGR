@@ -513,9 +513,9 @@ async function generateDocx() {
   setLoading(btn, true);
 
   try {
-    await req('POST', `/reports/${reportId}/generate`);
+    const genData = await req('POST', `/reports/${reportId}/generate`);
 
-    sse_gen = new EventSource(`${API_URL}/reports/${reportId}/generate/status?token=${auth.token()}`);
+    sse_gen = new EventSource(`${API_URL}/reports/${reportId}/generate/status?task_id=${genData.task_id}&token=${auth.token()}`);
 
     sse_gen.onmessage = async e => {
       const data = JSON.parse(e.data);
@@ -538,7 +538,8 @@ async function generateDocx() {
     };
 
     sse_gen.onerror = () => {
-      sse_gen?.close(); sse_gen = null;
+      if (!sse_gen) return;   // already closed cleanly in onmessage — ignore
+      sse_gen.close(); sse_gen = null;
       pWrap?.classList.add('hidden');
       setLoading(btn, false);
       toast('Помилка підключення', 'err');
