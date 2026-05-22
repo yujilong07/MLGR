@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSON
 
@@ -12,7 +12,7 @@ class Report(SQLModel,table = True):
     teacher : str
     group: str
     goal: str
-    sections : Optional[dict] = Field(default=None,sa_column=Column(JSON))
+    sections: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     conclusion : Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

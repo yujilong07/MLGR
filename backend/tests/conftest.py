@@ -57,9 +57,9 @@ def auth_token_fixture(client):
             "email": "test@example.com",
             "password": "password123"})
     
-    response = client.post("/auth/login", data={
-    "username": "test@example.com",
-    "password": "password123"})
+    response = client.post("/auth/login", json={
+        "email": "test@example.com",
+        "password": "password123"})
 
     return response.json()["access_token"]
 

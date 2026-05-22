@@ -52,31 +52,36 @@ def test_improve_section_success(client, auth_headers, report_id):
     assert response.json()["improved_text"] == "Improved text"
 
 
-# ── stream-conclusion (SSE) ──────────────────────────────────────────────────
+# ── stream-conclusion (SSE, token via query param) ───────────────────────────
 
 def test_stream_conclusion_no_auth(client):
-    response = client.get("/reports/1/stream-conclusion")
+    response = client.get("/reports/1/stream-conclusion?token=bad")
     assert response.status_code == 401
 
 
-def test_stream_conclusion_not_found(client, auth_headers):
+def test_stream_conclusion_missing_token(client):
+    response = client.get("/reports/1/stream-conclusion")
+    assert response.status_code == 422
+
+
+def test_stream_conclusion_not_found(client, auth_token):
     with patch("app.routes.generate.stream_conclusion", return_value=iter([])):
-        response = client.get("/reports/9999/stream-conclusion", headers=auth_headers)
+        response = client.get(f"/reports/9999/stream-conclusion?token={auth_token}")
     assert response.status_code == 404
 
 
-def test_stream_conclusion_success(client, auth_headers, report_id):
+def test_stream_conclusion_success(client, auth_token, report_id):
     with patch("app.routes.generate.stream_conclusion", return_value=iter(["tok1", " tok2"])):
-        response = client.get(f"/reports/{report_id}/stream-conclusion", headers=auth_headers)
+        response = client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
     assert response.status_code == 200
     assert "tok1" in response.text
     assert " tok2" in response.text
 
 
-def test_stream_conclusion_cached(client, auth_headers, report_id, mock_cache):
+def test_stream_conclusion_cached(client, auth_token, report_id, mock_cache):
     mock_cache.get.side_effect = lambda key: "Cached conclusion" if key.startswith("conclusion:") else None
     with patch("app.routes.generate.stream_conclusion") as mock_fn:
-        response = client.get(f"/reports/{report_id}/stream-conclusion", headers=auth_headers)
+        response = client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
     assert response.status_code == 200
     assert "Cached conclusion" in response.text
     mock_fn.assert_not_called()
@@ -108,37 +113,38 @@ def test_generate_docx_success(client, auth_headers, report_id):
     assert response.json()["task_id"] == "fake-task-id"
 
 
-# ── generate status ───────────────────────────────────────────────────────────
+# ── generate status (SSE, token via query param) ──────────────────────────────
 
 def test_generate_status_no_auth(client):
-    response = client.get("/reports/1/generate/status?task_id=abc")
+    response = client.get("/reports/1/generate/status?task_id=abc&token=bad")
     assert response.status_code == 401
 
 
-def test_generate_status_pending(client, auth_headers, report_id):
+def test_generate_status_missing_token(client):
+    response = client.get("/reports/1/generate/status?task_id=abc")
+    assert response.status_code == 422
+
+
+def test_generate_status_pending(client, auth_token, report_id):
     mock_result = MagicMock()
-    mock_result.status = "PENDING"
     mock_result.successful.return_value = False
-    mock_result.result = None
+    mock_result.failed.return_value = False
     with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result):
-        response = client.get(f"/reports/{report_id}/generate/status?task_id=abc", headers=auth_headers)
+        response = client.get(
+            f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "PENDING"
-    assert data["result"] is None
+    assert "pending" in response.text
 
 
-def test_generate_status_success(client, auth_headers, report_id):
+def test_generate_status_done(client, auth_token, report_id):
     mock_result = MagicMock()
-    mock_result.status = "SUCCESS"
     mock_result.successful.return_value = True
-    mock_result.result = {"file": f"report_{report_id}.docx"}
+    mock_result.failed.return_value = False
     with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result):
-        response = client.get(f"/reports/{report_id}/generate/status?task_id=abc", headers=auth_headers)
+        response = client.get(
+            f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "SUCCESS"
-    assert data["result"]["file"] == f"report_{report_id}.docx"
+    assert "done" in response.text
 
 
 # ── download ──────────────────────────────────────────────────────────────────

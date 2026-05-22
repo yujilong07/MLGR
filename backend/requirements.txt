@@ -19,3 +19,4 @@ pydantic-settings
 Pillow
 slowapi
 email-validator
+aiofiles

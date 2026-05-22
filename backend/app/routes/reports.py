@@ -10,7 +10,7 @@ from app.services.auth_service import get_current_user
 
 reports_router = APIRouter()
 
-@reports_router.post('/', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+@reports_router.post('', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 async def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     new_report = Report(
         user_id=current_user.id,
@@ -27,7 +27,7 @@ async def create_report(report_data: ReportCreate, current_user: User = Depends(
     session.refresh(new_report)
     return new_report
 
-@reports_router.get('/', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
+@reports_router.get('', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
 async def get_reports(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     reports = session.exec(select(Report).where(Report.user_id == current_user.id)).all()
     return reports

@@ -9,8 +9,12 @@ limiter = Limiter(key_func=get_remote_address)
 
 def get_user_email(request: Request) -> str:
     try:
+        # Authorization header (regular requests)
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip()
+        # query param fallback for EventSource / SSE (can't set headers)
+        if not token:
+            token = request.query_params.get("token", "")
         if not token:
             return get_remote_address(request)
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])

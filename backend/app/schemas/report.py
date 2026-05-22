@@ -1,15 +1,17 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
+
 
 class ReportCreate(BaseModel):
-    title :str
+    title: str
     discipline: str
-    teacher : str
+    teacher: str
     group: str
     goal: str
-    sections: Optional[dict] = None
+    sections: Optional[Any] = None
     conclusion: Optional[str] = None
+
 
 class ReportUpdate(BaseModel):
     title: Optional[str] = None
@@ -17,20 +19,21 @@ class ReportUpdate(BaseModel):
     teacher: Optional[str] = None
     group: Optional[str] = None
     goal: Optional[str] = None
-    sections: Optional[dict] = None
+    sections: Optional[Any] = None
     conclusion: Optional[str] = None
+
 
 class ReportResponse(BaseModel):
     id: int
-    title :str
+    title: str
     discipline: str
-    teacher : str
+    teacher: str
     group: str
     goal: str
-    sections : Optional[dict] 
-    conclusion : Optional[str] 
+    sections: Optional[Any]
+    conclusion: Optional[str]
     created_at: datetime
-    updated_at: datetime 
+    updated_at: datetime
 
     class Config:
         from_attributes = True
