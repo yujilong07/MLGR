@@ -165,7 +165,9 @@ function initAuth() {
 /* ═══════════════════════════════════════════════════════
    PAGE: DASHBOARD  (dashboard.html)
 ═══════════════════════════════════════════════════════ */
-let allReports = [];
+let allReports   = [];
+let currentView  = 'reports'; // 'reports' | 'disciplines'
+let activeDisc   = null;      // null = all, string = filtered by discipline
 
 async function initDashboard() {
   auth.guard();
@@ -173,10 +175,98 @@ async function initDashboard() {
 
   document.getElementById('btn-new')?.addEventListener('click', () => { window.location.href = 'editor.html'; });
 
+  document.getElementById('nav-reports')?.addEventListener('click', e => {
+    e.preventDefault();
+    activeDisc = null;
+    switchView('reports');
+  });
+
+  document.getElementById('nav-discs')?.addEventListener('click', e => {
+    e.preventDefault();
+    switchView('disciplines');
+  });
+
+  document.getElementById('btn-back-disc')?.addEventListener('click', () => {
+    activeDisc = null;
+    switchView('disciplines');
+  });
+
   const searchInput = document.getElementById('search-input');
   searchInput?.addEventListener('input', () => renderGrid(searchInput.value));
 
   await loadReports();
+}
+
+function switchView(view) {
+  currentView = view;
+  const reportsSection = document.getElementById('reports-section');
+  const discSection    = document.getElementById('disc-section');
+  const backBtn        = document.getElementById('btn-back-disc');
+  const titleEl        = document.getElementById('page-title');
+  const subtitleEl     = document.getElementById('page-subtitle');
+
+  document.getElementById('nav-reports')?.classList.toggle('active', view === 'reports');
+  document.getElementById('nav-discs')?.classList.toggle('active', view === 'disciplines');
+
+  if (view === 'disciplines') {
+    reportsSection?.classList.add('hidden');
+    discSection?.classList.remove('hidden');
+    backBtn?.classList.add('hidden');
+    if (titleEl)    titleEl.textContent    = 'Дисципліни';
+    if (subtitleEl) subtitleEl.textContent = 'Звіти згруповані по дисциплінах';
+    renderDiscGrid();
+  } else {
+    reportsSection?.classList.remove('hidden');
+    discSection?.classList.add('hidden');
+    if (activeDisc) {
+      backBtn?.classList.remove('hidden');
+      if (titleEl)    titleEl.textContent    = activeDisc;
+      if (subtitleEl) subtitleEl.textContent = 'Фільтр по дисципліні';
+    } else {
+      backBtn?.classList.add('hidden');
+      if (titleEl)    titleEl.textContent    = 'Мої звіти';
+      if (subtitleEl) subtitleEl.textContent = 'Всі лабораторні роботи в одному місці';
+    }
+    renderGrid(document.getElementById('search-input')?.value ?? '');
+  }
+}
+
+function renderDiscGrid() {
+  const grid = document.getElementById('disc-grid');
+  if (!grid) return;
+
+  const map = {};
+  allReports.forEach(r => {
+    const d = r.discipline || 'Без дисципліни';
+    (map[d] = map[d] || []).push(r);
+  });
+
+  const entries = Object.entries(map).sort((a, b) => b[1].length - a[1].length);
+
+  if (!entries.length) {
+    grid.innerHTML = `<div class="empty-state"><div class="empty-ico">📚</div><h3>Немає дисциплін</h3><p>Додай перший звіт щоб з'явилась дисципліна</p></div>`;
+    return;
+  }
+
+  grid.innerHTML = entries.map(([disc, reports]) => {
+    const latest  = [...reports].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    const n       = reports.length;
+    const label   = n === 1 ? 'звіт' : n < 5 ? 'звіти' : 'звітів';
+    return `
+    <div class="card card-hover disc-card fade-in" data-disc="${esc(disc)}">
+      <div class="dc-icon">📚</div>
+      <div class="dc-name">${esc(disc)}</div>
+      <div class="dc-count">${n} ${label}</div>
+      <div class="dc-date">Останній: ${fmtDate(latest.created_at)}</div>
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.disc-card').forEach(card => {
+    card.addEventListener('click', () => {
+      activeDisc = card.dataset.disc;
+      switchView('reports');
+    });
+  });
 }
 
 async function loadReports() {
@@ -205,9 +295,10 @@ function updateStats() {
 function renderGrid(query = '') {
   const grid = document.getElementById('reports-grid');
   const q    = query.toLowerCase();
-  const list = q
-    ? allReports.filter(r => r.title?.toLowerCase().includes(q) || r.discipline?.toLowerCase().includes(q))
+  let list   = activeDisc
+    ? allReports.filter(r => (r.discipline || 'Без дисципліни') === activeDisc)
     : allReports;
+  if (q) list = list.filter(r => r.title?.toLowerCase().includes(q) || r.discipline?.toLowerCase().includes(q));
 
   if (!list.length) {
     grid.innerHTML = `

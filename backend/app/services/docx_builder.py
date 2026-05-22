@@ -105,29 +105,47 @@ def add_title_page(document, report, student_name=""):
     document.add_page_break()
 
 
-def add_table_of_contents(document):
+def add_table_of_contents(document, headings=None):
     _centered(document, "ЗМІСТ", bold=True)
 
-    toc_para = document.add_paragraph()
-    toc_para.paragraph_format.first_line_indent = Cm(0)
-    run = toc_para.add_run()
+    # Field begin + instrText + separate — Word uses this to auto-rebuild the TOC
+    p = document.add_paragraph()
+    p.paragraph_format.first_line_indent = Cm(0)
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    r = p.add_run()
 
-    fldChar = OxmlElement('w:fldChar')
-    fldChar.set(qn('w:fldCharType'), 'begin')
-    run._r.append(fldChar)
+    fc = OxmlElement('w:fldChar')
+    fc.set(qn('w:fldCharType'), 'begin')
+    r._r.append(fc)
 
-    instrText = OxmlElement('w:instrText')
-    instrText.set(qn('xml:space'), 'preserve')
-    instrText.text = ' TOC \\o "1-3" \\h \\z \\u '
-    run._r.append(instrText)
+    instr = OxmlElement('w:instrText')
+    instr.set(qn('xml:space'), 'preserve')
+    instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+    r._r.append(instr)
 
-    fldChar = OxmlElement('w:fldChar')
-    fldChar.set(qn('w:fldCharType'), 'separate')
-    run._r.append(fldChar)
+    fc2 = OxmlElement('w:fldChar')
+    fc2.set(qn('w:fldCharType'), 'separate')
+    r._r.append(fc2)
 
-    fldChar = OxmlElement('w:fldChar')
-    fldChar.set(qn('w:fldCharType'), 'end')
-    run._r.append(fldChar)
+    # Pre-populated entries visible before Word updates the field
+    for text, level in (headings or []):
+        ep = document.add_paragraph()
+        ep.paragraph_format.first_line_indent = Cm(0)
+        ep.paragraph_format.space_before = Pt(0)
+        ep.paragraph_format.space_after = Pt(2)
+        ep.paragraph_format.left_indent = Cm((level - 1) * 1.25)
+        set_font(ep.add_run(text), size=14)
+
+    # Field end
+    p_end = document.add_paragraph()
+    p_end.paragraph_format.first_line_indent = Cm(0)
+    p_end.paragraph_format.space_before = Pt(0)
+    p_end.paragraph_format.space_after = Pt(0)
+    r_end = p_end.add_run()
+    fc3 = OxmlElement('w:fldChar')
+    fc3.set(qn('w:fldCharType'), 'end')
+    r_end._r.append(fc3)
 
     document.add_page_break()
 
@@ -188,7 +206,13 @@ def add_image(document, image_path, image_number, caption_text):
 def build_report_docx(report, images=None, student_name=""):
     document = create_base_doc()
     add_title_page(document, report, student_name)
-    add_table_of_contents(document)
+
+    toc_headings = [("Мета роботи", 1)]
+    if report.sections:
+        for idx, sec in enumerate(report.sections):
+            toc_headings.append((sec.get('title', f'Розділ {idx + 1}'), 1))
+    toc_headings.append(("Висновки", 1))
+    add_table_of_contents(document, toc_headings)
 
     add_heading(document, "Мета роботи")
     add_paragraph_text(document, report.goal or "")

@@ -22,8 +22,11 @@
 
     <nav class="nav-section">
       <span class="nav-label">Навігація</span>
-      <a href="dashboard.html" class="nav-link active">
+      <a href="#" id="nav-reports" class="nav-link active">
         <span class="nav-ico">📋</span> Мої звіти
+      </a>
+      <a href="#" id="nav-discs" class="nav-link">
+        <span class="nav-ico">📚</span> Дисципліни
       </a>
       <a href="editor.html" class="nav-link">
         <span class="nav-ico">✏️</span> Новий звіт
@@ -45,12 +48,13 @@
     <!-- header -->
     <div class="page-hdr">
       <div>
-        <h1 class="page-title">Мої звіти</h1>
-        <p class="page-subtitle">Всі лабораторні роботи в одному місці</p>
+        <h1 class="page-title" id="page-title">Мої звіти</h1>
+        <p class="page-subtitle" id="page-subtitle">Всі лабораторні роботи в одному місці</p>
       </div>
-      <button id="btn-new" class="btn btn-primary btn-lg">
-        ✦ Новий звіт
-      </button>
+      <div class="flex gap-6">
+        <button id="btn-back-disc" class="btn btn-secondary hidden">← Всі дисципліни</button>
+        <button id="btn-new" class="btn btn-primary btn-lg">✦ Новий звіт</button>
+      </div>
     </div>
 
     <!-- stats -->
@@ -72,21 +76,27 @@
       </div>
     </div>
 
-    <!-- search + grid -->
-    <div class="toolbar">
-      <input id="search-input" type="search" placeholder="🔍  Пошук за назвою або дисципліною..." style="max-width:310px">
+    <!-- reports section -->
+    <div id="reports-section">
+      <div class="toolbar">
+        <input id="search-input" type="search" placeholder="🔍  Пошук за назвою або дисципліною..." style="max-width:310px">
+      </div>
+      <div id="reports-grid" class="reports-grid">
+        <div class="empty-state">
+          <div class="empty-ico">⏳</div>
+          <h3>Завантажуємо...</h3>
+        </div>
+      </div>
     </div>
 
-    <div id="reports-grid" class="reports-grid">
-      <div class="empty-state">
-        <div class="empty-ico">⏳</div>
-        <h3>Завантажуємо...</h3>
-      </div>
+    <!-- disciplines section -->
+    <div id="disc-section" class="hidden">
+      <div id="disc-grid" class="disc-grid"></div>
     </div>
 
   </main>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
