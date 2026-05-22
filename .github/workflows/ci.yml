@@ -35,4 +35,6 @@ jobs:
           REDIS_URL: redis://localhost:6379
           SECRET_KEY: test-secret
           GROQ_API_KEY: test-key
+          UPLOADS_DIR: /tmp/uploads
+          GENERATED_DIR: /tmp/generated
         run: pytest tests/ -v

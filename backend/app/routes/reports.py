@@ -77,7 +77,7 @@ async def upload_image(
 
     ext = file.filename.split('.')[-1]
     filename = f"{uuid.uuid4()}.{ext}"
-    path = os.path.join("/app/uploads", filename)
+    path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), filename)
     with open(path, "wb") as f:
         f.write(await file.read())
 

@@ -234,7 +234,7 @@ def build_report_docx(report, images=None, student_name=""):
                 add_listing(document, section['code'], listing_counter, title)
                 listing_counter += 1
             for img in images_by_section.get(str(idx), []):
-                img_path = os.path.join("/app/uploads", img.filename)
+                img_path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), img.filename)
                 if os.path.exists(img_path):
                     add_image(document, img_path, image_counter, img.caption)
                     image_counter += 1
@@ -242,7 +242,7 @@ def build_report_docx(report, images=None, student_name=""):
     add_heading(document, "Висновки")
     add_paragraph_text(document, report.conclusion or "")
 
-    output_dir = "/app/generated"
+    output_dir = os.getenv("GENERATED_DIR", "/app/generated")
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, f"report_{report.id}.docx")
     document.save(path)
