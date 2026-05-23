@@ -127,9 +127,11 @@ def test_generate_status_missing_token(client):
 
 def test_generate_status_pending(client, auth_token, report_id):
     mock_result = MagicMock()
-    mock_result.successful.return_value = False
+    # First poll → pending, second poll → done so the stream terminates
+    mock_result.successful.side_effect = [False, True]
     mock_result.failed.return_value = False
-    with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result):
+    with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result), \
+         patch("app.routes.generate.asyncio.sleep"):
         response = client.get(
             f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
     assert response.status_code == 200
