@@ -35,8 +35,8 @@ def test_get_report_by_id_other_user_forbidden(client, auth_headers):
             "email": "impostor@haha.com",
             "password": "12345678"})
     
-    user2 = client.post("/auth/login", data={
-    "username": "impostor@haha.com",
+    user2 = client.post("/auth/login", json={
+    "email": "impostor@haha.com",
     "password": "12345678"})
 
     token_b = user2.json()["access_token"]
@@ -141,8 +141,8 @@ def test_delete_report_by_id_other_user_forbidden(client, auth_headers):
             "email": "impostor@haha.com",
             "password": "12345678"})
     
-    user2 = client.post("/auth/login", data={
-    "username": "impostor@haha.com",
+    user2 = client.post("/auth/login", json={
+    "email": "impostor@haha.com",
     "password": "12345678"})
 
     token_b = user2.json()["access_token"]
