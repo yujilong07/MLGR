@@ -48,8 +48,8 @@ app.include_router(generate_router, tags=["generate"])
 app.include_router(upload_router, tags=["upload"])
 
 import os
-UPLOADS_DIR   = os.getenv("UPLOADS_DIR",   "/app/uploads")
-GENERATED_DIR = os.getenv("GENERATED_DIR", "/app/generated")
+UPLOADS_DIR   = os.getenv("UPLOADS_DIR",   "/tmp/uploads")
+GENERATED_DIR = os.getenv("GENERATED_DIR", "/tmp/generated")
 os.makedirs(UPLOADS_DIR,   exist_ok=True)
 os.makedirs(GENERATED_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
