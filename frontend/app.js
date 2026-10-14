@@ -394,8 +394,12 @@ async function loadReport(id) {
     document.getElementById('f-group').value      = r.group      || '';
     document.getElementById('f-goal').value       = r.goal       || '';
 
-    sections = (r.sections || []).map((s, i) => ({
+    const toBlock = (s, i) => ({
       id: i, title: s.title || '', text: s.text || '', code: s.code || '', language: s.language || 'python',
+    });
+    sections = (r.sections || []).map((s, i) => ({
+      ...toBlock(s, i),
+      subsections: (s.subsections || []).map(toBlock),
     }));
     renderSections();
 
@@ -408,8 +412,18 @@ async function loadReport(id) {
 }
 
 /* ── sections ── */
+// path: "0" — section, "0.1" — its subsection (same format the backend stores for images)
+function blockAt(path) {
+  const [i, j] = String(path).split('.').map(Number);
+  return j === undefined ? sections[i] : sections[i].subsections[j];
+}
+
+function newBlock() {
+  return { id: Date.now(), title: '', text: '', code: '', language: 'python' };
+}
+
 function addSection() {
-  sections.push({ id: Date.now(), title: '', text: '', code: '', language: 'python' });
+  sections.push({ ...newBlock(), subsections: [] });
   renderSections();
   document.querySelectorAll('.section-item').at(-1)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -417,6 +431,52 @@ function addSection() {
 function removeSection(idx) {
   sections.splice(idx, 1);
   renderSections();
+}
+
+function addSubsection(i) {
+  sections[i].subsections.push(newBlock());
+  renderSections();
+}
+
+function removeSubsection(i, j) {
+  sections[i].subsections.splice(j, 1);
+  renderSections();
+}
+
+const LANGS = ['python','javascript','typescript','java','cpp','c','sql','bash','html','css'];
+
+function blockFieldsHtml(path, block, kind) {
+  const id = String(path).replace('.', '-');
+  return `
+        <div class="form-group">
+          <label>Текст ${kind}</label>
+          <textarea rows="4" placeholder="Опишіть хід роботи, результати спостережень..."
+                    oninput="blockAt('${path}').text = this.value">${esc(block.text)}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Код <span class="text-muted text-sm">(необов'язково)</span></label>
+          <div class="code-wrap">
+            <div class="code-head">
+              <select class="lang-select" onchange="blockAt('${path}').language = this.value">
+                ${LANGS.map(l => `<option value="${l}" ${block.language === l ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+              <span class="text-sm text-muted font-mono">код</span>
+            </div>
+            <textarea placeholder="# вставте код тут..." oninput="blockAt('${path}').code = this.value">${esc(block.code)}</textarea>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Скріншоти <span class="text-muted text-sm">(необов'язково)</span></label>
+          <div class="upload-zone" onclick="triggerUpload('${path}')"
+               ondragover="event.preventDefault(); this.classList.add('drag')"
+               ondragleave="this.classList.remove('drag')"
+               ondrop="handleDrop(event,'${path}'); this.classList.remove('drag')">
+            📎 Натисни або перетягни зображення
+          </div>
+          <input type="file" id="fu-${id}" accept="image/*" multiple style="display:none"
+                 onchange="handleFileInput(this, '${path}')">
+          <div class="img-grid" id="imgs-${id}"></div>
+        </div>`;
 }
 
 function renderSections() {
@@ -428,8 +488,6 @@ function renderSections() {
     return;
   }
 
-  const langs = ['python','javascript','typescript','java','cpp','c','sql','bash','html','css'];
-
   container.innerHTML = sections.map((sec, i) => `
     <div class="section-item fade-in">
       <div class="section-head">
@@ -439,41 +497,26 @@ function renderSections() {
         <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})" title="Видалити розділ">✕</button>
       </div>
       <div class="section-body">
-        <div class="form-group">
-          <label>Текст розділу</label>
-          <textarea rows="4" placeholder="Опишіть хід роботи, результати спостережень..."
-                    oninput="sections[${i}].text = this.value">${esc(sec.text)}</textarea>
-        </div>
-        <div class="form-group">
-          <label>Код <span class="text-muted text-sm">(необов'язково)</span></label>
-          <div class="code-wrap">
-            <div class="code-head">
-              <select class="lang-select" onchange="sections[${i}].language = this.value">
-                ${langs.map(l => `<option value="${l}" ${sec.language === l ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-              <span class="text-sm text-muted font-mono">код</span>
-            </div>
-            <textarea placeholder="# вставте код тут..." oninput="sections[${i}].code = this.value">${esc(sec.code)}</textarea>
+        ${blockFieldsHtml(`${i}`, sec, 'розділу')}
+        ${sec.subsections.map((sub, j) => `
+        <div class="section-item subsection-item">
+          <div class="section-head">
+            <span class="sec-num">${i + 1}.${j + 1}</span>
+            <input class="sec-name" placeholder="Назва підрозділу..."
+                   value="${esc(sub.title)}" oninput="sections[${i}].subsections[${j}].title = this.value">
+            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})" title="Видалити підрозділ">✕</button>
           </div>
-        </div>
-        <div class="form-group">
-          <label>Скріншоти <span class="text-muted text-sm">(необов'язково)</span></label>
-          <div class="upload-zone" onclick="triggerUpload(${i})"
-               ondragover="event.preventDefault(); this.classList.add('drag')"
-               ondragleave="this.classList.remove('drag')"
-               ondrop="handleDrop(event,${i}); this.classList.remove('drag')">
-            📎 Натисни або перетягни зображення
+          <div class="section-body">
+            ${blockFieldsHtml(`${i}.${j}`, sub, 'підрозділу')}
           </div>
-          <input type="file" id="fu-${i}" accept="image/*" multiple style="display:none"
-                 onchange="handleFileInput(this, ${i})">
-          <div class="img-grid" id="imgs-${i}"></div>
-        </div>
+        </div>`).join('')}
+        <button class="btn btn-secondary btn-sm" onclick="addSubsection(${i})">+ Підрозділ ${i + 1}.${sec.subsections.length + 1}</button>
       </div>
     </div>`).join('');
 }
 
 /* ── file upload ── */
-function triggerUpload(i) { document.getElementById(`fu-${i}`)?.click(); }
+function triggerUpload(path) { document.getElementById(`fu-${String(path).replace('.', '-')}`)?.click(); }
 
 async function handleDrop(e, i) {
   e.preventDefault();
@@ -486,13 +529,13 @@ async function handleFileInput(input, i) {
   input.value = '';
 }
 
-async function uploadFiles(files, sectionIdx) {
+async function uploadFiles(files, sectionPath) {
   if (!reportId) { toast('Спочатку збережи звіт', 'err'); return; }
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('report_id', reportId);
-    fd.append('section_index', sectionIdx);
+    fd.append('section_path', sectionPath);
     try {
       const res = await fetch(`${API_URL}/upload/image`, {
         method: 'POST',
@@ -501,13 +544,13 @@ async function uploadFiles(files, sectionIdx) {
       });
       if (!res.ok) throw new Error('Upload failed');
       const data = await res.json();
-      appendThumb(sectionIdx, data.url, data.id);
+      appendThumb(sectionPath, data.url, data.id);
     } catch (ex) { toast('Помилка завантаження: ' + ex.message, 'err'); }
   }
 }
 
-function appendThumb(i, url, imgId) {
-  const grid = document.getElementById(`imgs-${i}`);
+function appendThumb(path, url, imgId) {
+  const grid = document.getElementById(`imgs-${String(path).replace('.', '-')}`);
   if (!grid) return;
   const div = document.createElement('div');
   div.className = 'img-thumb';
@@ -529,7 +572,10 @@ async function saveReport() {
     teacher:    document.getElementById('f-teacher').value,
     group:      document.getElementById('f-group').value,
     goal:       document.getElementById('f-goal').value,
-    sections:   sections.map(s => ({ title: s.title, text: s.text, code: s.code, language: s.language })),
+    sections:   sections.map(s => ({
+      title: s.title, text: s.text, code: s.code, language: s.language,
+      subsections: s.subsections.map(b => ({ title: b.title, text: b.text, code: b.code, language: b.language })),
+    })),
   };
 
   try {

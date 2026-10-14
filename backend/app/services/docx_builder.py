@@ -400,48 +400,59 @@ def add_image(document, image_path, image_number, caption_text):
     return caption
 
 def build_report_docx(report, images=None, student_name=""):
+    """Sections are numbered per ДСТУ 3008:2015: "1 НАЗВА РОЗДІЛУ", "1.1 Назва підрозділу".
+    МЕТА РОБОТИ and ВИСНОВКИ are structural elements and stay unnumbered."""
     document = create_base_doc()
     add_title_page(document, report, student_name)
     toc_placeholder = add_table_of_contents(document)
 
     sections = report.sections or []
     # Body starts after the title page and the TOC page(s)
-    toc_pages = math.ceil((len(sections) + 3) * LINE_PT / TEXT_HEIGHT_PT)
+    toc_lines = 3 + sum(1 + len(sec.get('subsections') or []) for sec in sections)
+    toc_pages = math.ceil(toc_lines * LINE_PT / TEXT_HEIGHT_PT)
     pages = PageEstimator(start_page=2 + toc_pages)
     toc_headings = []
 
-    def heading(text):
+    def heading(text, level=1):
         bookmark = f'_Toc{len(toc_headings) + 1:08d}'
         pages.heading()
-        toc_headings.append((text.upper(), 1, bookmark, pages.page))
-        add_heading(document, text, level=1, bookmark=bookmark)
-
-    heading("Мета роботи")
-    add_paragraph_text(document, report.goal)
-    pages.text(report.goal)
+        toc_headings.append((text.upper() if level == 1 else text, level, bookmark, pages.page))
+        add_heading(document, text, level=level, bookmark=bookmark)
 
     images_by_section = {}
     for img in images or []:
         images_by_section.setdefault(img.section_path, []).append(img)
 
-    listing_counter = 1
-    image_counter = 1
-    for idx, section in enumerate(sections):
-        title = (section.get('title') or '').strip() or f'Розділ {idx + 1}'
-        heading(title)
-        if section.get('text'):
-            add_paragraph_text(document, section['text'])
-            pages.text(section['text'])
-        if section.get('code'):
-            add_listing(document, section['code'], listing_counter, title)
-            pages.code(section['code'])
-            listing_counter += 1
-        for img in images_by_section.get(str(idx), []):
+    counters = {'listing': 1, 'image': 1}
+
+    def content(block, title, section_path):
+        if block.get('text'):
+            add_paragraph_text(document, block['text'])
+            pages.text(block['text'])
+        if block.get('code'):
+            add_listing(document, block['code'], counters['listing'], title)
+            pages.code(block['code'])
+            counters['listing'] += 1
+        for img in images_by_section.get(section_path, []):
             img_path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), img.filename)
             if os.path.exists(img_path):
-                add_image(document, img_path, image_counter, img.caption)
+                add_image(document, img_path, counters['image'], img.caption)
                 pages.image(image_height(img_path))
-                image_counter += 1
+                counters['image'] += 1
+
+    heading("Мета роботи")
+    add_paragraph_text(document, report.goal)
+    pages.text(report.goal)
+
+    for idx, section in enumerate(sections):
+        title = (section.get('title') or '').strip() or f'Розділ {idx + 1}'
+        heading(f"{idx + 1} {title}")
+        content(section, title, str(idx))
+
+        for sub_idx, sub in enumerate(section.get('subsections') or []):
+            sub_title = (sub.get('title') or '').strip() or f'Підрозділ {idx + 1}.{sub_idx + 1}'
+            heading(f"{idx + 1}.{sub_idx + 1} {sub_title}", level=2)
+            content(sub, sub_title, f"{idx}.{sub_idx}")
 
     heading("Висновки")
     add_paragraph_text(document, report.conclusion)

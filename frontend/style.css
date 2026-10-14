@@ -421,6 +421,8 @@ select option { background: var(--bg-elevated); }
 }
 .sec-name::placeholder { color: var(--text-faint); font-weight: 400; }
 .section-body { padding: 13px; display: flex; flex-direction: column; gap: 11px; }
+.subsection-item { margin-left: 14px; }
+.subsection-item .sec-num { min-width: 2.2em; }
 
 /* code block */
 .code-wrap { background: #0c0c10; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; }
