@@ -3,22 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
   <title>Вхід — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body class="auth-body">
 
   <div class="auth-wrap">
 
     <div class="auth-logo-block">
-      <a href="index.html">
-        <div class="logo-name">MLGR</div>
-        <div class="logo-sub">Звіти до лабораторних робіт · ХНУРЕ</div>
+      <a href="index.html" class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
+        <span class="logo-name">MLGR</span>
       </a>
     </div>
 
     <div class="auth-card">
+      <h1>З поверненням</h1>
+      <p class="auth-sub">Увійдіть або створіть акаунт, щоб продовжити</p>
+
       <div class="auth-tabs">
         <button class="tab-btn active" data-tab="login">Вхід</button>
         <button class="tab-btn"        data-tab="register">Реєстрація</button>
@@ -31,7 +35,7 @@
         </div>
         <div class="form-group">
           <label for="login-pass">Пароль</label>
-          <input id="login-pass" type="password" autocomplete="current-password" required>
+          <input id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password" required>
         </div>
         <div id="login-err" class="error-box hidden"></div>
         <button type="submit" class="btn btn-primary btn-full btn-lg">Увійти</button>
@@ -51,10 +55,10 @@
       </form>
     </div>
 
-    <a href="index.html" class="auth-hint">На головну</a>
+    <a href="index.html" class="auth-hint">← На головну</a>
 
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

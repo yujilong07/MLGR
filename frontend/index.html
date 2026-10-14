@@ -3,114 +3,161 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>MLGR — звіти до лабораторних робіт ХНУРЕ</title>
   <meta name="description" content="Заповнюєте мету, розділи, код і скріншоти — отримуєте .docx з титулкою, змістом і форматуванням за ДСТУ 3008:2015.">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
-<body>
+<body class="lp-body">
+
+<div class="lp-nav-wrap">
+  <div class="lp lp-nav">
+    <a class="brand" href="index.html">
+      <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
+      <span class="logo-name">MLGR</span>
+    </a>
+    <nav class="lp-nav-links">
+      <a class="plain" href="#how">Як це працює</a>
+      <a class="plain" href="#format">Форматування</a>
+      <a class="plain" href="#conclusions">Висновки</a>
+      <a href="auth.html" class="btn btn-ghost btn-sm">Увійти</a>
+      <a href="auth.html?tab=register" class="btn btn-primary btn-sm">Почати</a>
+    </nav>
+  </div>
+</div>
 
 <div class="lp">
 
-  <header class="lp-nav">
-    <a class="logo" href="index.html">
-      <span class="logo-name">MLGR</span>
-      <span class="logo-sub">звіти до лабораторних · ХНУРЕ</span>
-    </a>
-    <a href="auth.html" class="btn btn-secondary btn-sm">Увійти</a>
-  </header>
-
   <section class="lp-hero">
-    <div>
-      <h1>Звіт до лабораторної — без годин у Word</h1>
-      <p>
-        Заповнюєте мету, текст розділів, вставляєте код і скріншоти. На виході — .docx
-        з титульною сторінкою, змістом, нумерацією та лістингами за ДСТУ&nbsp;3008:2015.
-        Чернетку висновків допоможе написати модель, яка читає саме вашу роботу.
-      </p>
-      <div class="lp-ctas">
-        <a href="auth.html?tab=register" class="btn btn-primary btn-lg">Створити акаунт</a>
-        <a href="auth.html" class="btn btn-secondary btn-lg">У мене вже є акаунт</a>
+    <span class="lp-eyebrow"><b>ДСТУ 3008:2015</b> · титулка, зміст, лістинги</span>
+    <h1>Звіт до лабораторної — за хвилини, а не за вечір</h1>
+    <p>
+      Заповніть мету, розділи, код і скріншоти. MLGR збере .docx з титульною сторінкою,
+      змістом і нумерацією, а модель напише чернетку висновків саме до вашої роботи.
+    </p>
+    <div class="lp-ctas">
+      <a href="auth.html?tab=register" class="btn btn-primary btn-lg">Створити звіт безкоштовно</a>
+      <a href="auth.html" class="btn btn-secondary btn-lg">Увійти</a>
+    </div>
+
+    <div class="shot" aria-hidden="true">
+      <div class="shot-inner">
+        <div class="shot-bar"><i></i><i></i><i></i><span>mlgr · редактор</span></div>
+        <div class="shot-form">
+          <div class="shot-field"><small>Назва роботи</small><div>Лабораторна робота №3. Сортування масивів</div></div>
+          <div class="shot-field"><small>Мета роботи</small><div>Дослідити ефективність алгоритмів сортування</div></div>
+          <div class="shot-field code"><small>1.1 Реалізація алгоритмів · python</small><div>def quicksort(a):
+    if len(a) &lt; 2: return a
+    p = median_of_three(a)
+    ...</div></div>
+          <div class="shot-ai">
+            <b>Висновки.</b> У ході виконання лабораторної роботи було реалізовано сортування бульбашкою та
+            швидке сортування з вибором опорного елемента за принципом «медіана трьох»…<span class="caret"></span>
+          </div>
+        </div>
+        <div class="shot-doc">
+          <div class="sheet">
+            <span class="sheet-page">2</span>
+            <h4>ЗМІСТ</h4>
+            <div class="toc-row"><span>МЕТА РОБОТИ</span><span class="lead"></span><span>3</span></div>
+            <div class="toc-row"><span>1 ХІД РОБОТИ</span><span class="lead"></span><span>3</span></div>
+            <div class="toc-row sub"><span>1.1 Реалізація алгоритмів</span><span class="lead"></span><span>3</span></div>
+            <div class="toc-row sub"><span>1.2 Вимірювання часу</span><span class="lead"></span><span>5</span></div>
+            <div class="toc-row"><span>2 АНАЛІЗ РЕЗУЛЬТАТІВ</span><span class="lead"></span><span>6</span></div>
+            <div class="toc-row"><span>ВИСНОВКИ</span><span class="lead"></span><span>7</span></div>
+            <div class="sheet-gap"></div>
+            <div class="sheet-line indent"></div>
+            <div class="sheet-line"></div>
+            <div class="sheet-line w85"></div>
+            <div class="sheet-line indent"></div>
+            <div class="sheet-line w60"></div>
+          </div>
+        </div>
       </div>
     </div>
+  </section>
 
-    <div class="sheet" aria-label="Приклад сторінки змісту згенерованого звіту">
-      <span class="sheet-page">2</span>
-      <h4>ЗМІСТ</h4>
-      <div class="toc-row"><span>МЕТА РОБОТИ</span><span class="lead"></span><span>3</span></div>
-      <div class="toc-row"><span>1 ХІД РОБОТИ</span><span class="lead"></span><span>3</span></div>
-      <div class="toc-row sub"><span>1.1 Реалізація алгоритмів</span><span class="lead"></span><span>3</span></div>
-      <div class="toc-row sub"><span>1.2 Вимірювання часу</span><span class="lead"></span><span>5</span></div>
-      <div class="toc-row"><span>2 АНАЛІЗ РЕЗУЛЬТАТІВ</span><span class="lead"></span><span>6</span></div>
-      <div class="toc-row"><span>ВИСНОВКИ</span><span class="lead"></span><span>7</span></div>
-      <div class="sheet-gap"></div>
-      <div class="sheet-line indent"></div>
-      <div class="sheet-line"></div>
-      <div class="sheet-line w85"></div>
-      <div class="sheet-line indent"></div>
-      <div class="sheet-line w60"></div>
+  <p class="lp-logos">Зроблено для студентів ХНУРЕ · Times New Roman 14 · інтервал 1,5 · поля 30/20/20/20 мм</p>
+
+  <section class="lp-section" id="how">
+    <div class="lp-section-head">
+      <p class="lp-kicker">Як це працює</p>
+      <h2>Від порожньої форми до файлу, який можна здавати</h2>
+      <p class="lp-lead">Жодного ручного форматування у Word — структура документа будується з того, що ви ввели.</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-ico"><svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        <h3>Заповнюєте дані</h3>
+        <p>Назва, дисципліна, група, викладач і мета — для титулки. Далі розділи й підрозділи з текстом, кодом і скріншотами.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-ico"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg></div>
+        <h3>Пишете висновки</h3>
+        <p>Самостійно або з чернетки, яку модель складає за змістом саме вашої роботи. Текст завжди можна відредагувати.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-ico"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div>
+        <h3>Завантажуєте .docx</h3>
+        <p>Документ збирається за кілька секунд. Word запропонує оновити поля — і номери сторінок у змісті стануть точними.</p>
+      </div>
     </div>
   </section>
 
-  <section class="lp-section">
-    <h2>Як це працює</h2>
-    <p class="lp-lead">Від порожньої форми до файлу, який можна здавати.</p>
-    <ol class="steps">
-      <li>
-        <h3>Заповнюєте дані</h3>
-        <p>Назва, дисципліна, група, викладач і мета — для титулки. Далі розділи й підрозділи: текст, код, скріншоти.</p>
-      </li>
-      <li>
-        <h3>Пишете висновки</h3>
-        <p>Самостійно або з чернетки, яку модель складає за змістом вашої роботи. Текст завжди можна відредагувати.</p>
-      </li>
-      <li>
-        <h3>Завантажуєте .docx</h3>
-        <p>Документ збирається за кілька секунд. Word запропонує оновити поля — тоді номери сторінок у змісті будуть точними.</p>
-      </li>
-    </ol>
-  </section>
-
-  <section class="lp-section">
-    <h2>Що вже враховано у форматуванні</h2>
-    <p class="lp-lead">Налаштовувати нічого не треба — ці параметри застосовуються до кожного документа.</p>
+  <section class="lp-section" id="format">
+    <div class="lp-section-head">
+      <p class="lp-kicker">Форматування</p>
+      <h2>Вимоги вже враховані</h2>
+      <p class="lp-lead">Налаштовувати нічого не треба — ці параметри застосовуються до кожного документа.</p>
+    </div>
     <dl class="spec">
-      <div><dt>Формат і поля</dt><dd>A4; ліве 30 мм, решта 20 мм</dd></div>
+      <div><dt>Формат і поля</dt><dd>A4 · ліве 30 мм, решта 20 мм</dd></div>
       <div><dt>Основний текст</dt><dd>Times New Roman 14 pt, інтервал 1,5</dd></div>
-      <div><dt>Абзацний відступ</dt><dd>1,25 см, вирівнювання за шириною</dd></div>
+      <div><dt>Абзацний відступ</dt><dd>1,25 см, за шириною</dd></div>
       <div><dt>Нумерація сторінок</dt><dd>угорі праворуч, без номера на титулці</dd></div>
-      <div><dt>Зміст</dt><dd>з крапками й номерами сторінок, клікабельний</dd></div>
+      <div><dt>Зміст</dt><dd>з крапками й номерами сторінок</dd></div>
       <div><dt>Заголовки</dt><dd>«1 РОЗДІЛ», «1.1 Підрозділ»</dd></div>
       <div><dt>Лістинги коду</dt><dd>Courier New 12 pt, «Лістинг 1 – …»</dd></div>
       <div><dt>Рисунки</dt><dd>по центру, «Рисунок 1 – …»</dd></div>
     </dl>
   </section>
 
-  <section class="lp-section">
-    <h2>Висновки, які стосуються саме вашої роботи</h2>
-    <p class="lp-lead">
-      Модель отримує всю роботу — тему, мету, текст розділів, код і підписи рисунків — і пише
-      про те, що там справді є: методи, результати, числа. Ось чернетка для лабораторної про сортування:
-    </p>
+  <section class="lp-section" id="conclusions">
+    <div class="lp-section-head">
+      <p class="lp-kicker">Висновки</p>
+      <h2>Про вашу роботу, а не «про все одразу»</h2>
+      <p class="lp-lead">Модель отримує всю роботу — тему, мету, розділи, код і підписи рисунків — і пише про те, що там справді є.</p>
+    </div>
     <div class="lp-conclusion">
-      <blockquote>
-        У ході виконання лабораторної роботи було реалізовано два алгоритми сортування масивів: сортування
-        бульбашкою та швидке сортування з вибором опорного елемента за принципом «медіана трьох». При 1&nbsp;000
-        елементів бульбашка виконувалась 0,09&nbsp;с, швидке сортування — 0,002&nbsp;с; при 10&nbsp;000 — відповідно
-        8,4&nbsp;с і 0,03&nbsp;с. Час бульбашки зріс приблизно в 93 рази при десятикратному збільшенні розміру,
-        швидкого сортування — лише в 15 разів, що відповідає складності O(n²) та O(n log n).
-      </blockquote>
-      <ul>
-        <li>Нічого не вигадує: якщо в роботі немає чисел, їх не буде й у висновках.</li>
-        <li>Для реферату підсумовує ключові положення розділів, а не пише про «отримані навички».</li>
-        <li>Це чернетка: перечитайте її й виправте, перш ніж здавати.</li>
+      <div class="quote-card">
+        <span class="badge">Лабораторна №3 · Сортування масивів</span>
+        <p>
+          У ході виконання лабораторної роботи було реалізовано два алгоритми сортування масивів: сортування
+          бульбашкою та швидке сортування з вибором опорного елемента за принципом «медіана трьох». При 1&nbsp;000
+          елементів бульбашка виконувалась 0,09&nbsp;с, швидке сортування — 0,002&nbsp;с; при 10&nbsp;000 — відповідно
+          8,4&nbsp;с і 0,03&nbsp;с. Час бульбашки зріс приблизно в 93 рази при десятикратному збільшенні розміру,
+          швидкого сортування — лише в 15 разів, що відповідає складності O(n²) та O(n log n).
+        </p>
+      </div>
+      <ul class="checks">
+        <li><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>Конкретика з роботи</b>Алгоритми, бібліотеки, числа й результати — з вашого тексту та коду.</span></li>
+        <li><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>Нічого не вигадує</b>Якщо в роботі немає чисел, їх не буде й у висновках.</span></li>
+        <li><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>Реферати теж</b>Підсумовує ключові положення розділів замість загальних фраз.</span></li>
+        <li><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>Ви — редактор</b>Це чернетка: перечитайте й виправте перед здачею.</span></li>
       </ul>
     </div>
   </section>
 
+  <section class="lp-cta">
+    <h2>Наступний звіт — без мук із Word</h2>
+    <p>Реєстрація займає пів хвилини: email і пароль.</p>
+    <a href="auth.html?tab=register" class="btn btn-primary btn-lg">Створити акаунт</a>
+  </section>
+
   <footer class="lp-footer">
     <span>MLGR — генератор звітів для студентів ХНУРЕ</span>
-    <a href="auth.html?tab=register">Почати</a>
+    <span><a href="auth.html">Увійти</a></span>
   </footer>
 
 </div>

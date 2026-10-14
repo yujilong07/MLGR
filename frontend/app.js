@@ -76,6 +76,13 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('uk-UA', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 function initials(email) { return (email || '?')[0].toUpperCase(); }
+const ICONS = {
+  file:     '<svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>',
+  download: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
+  trash:    '<svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
+  image:    '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>',
+  plus:     '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+};
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function setLoading(btn, on) {
@@ -311,16 +318,17 @@ function renderGrid(query = '') {
   const sorted = [...list].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   grid.innerHTML = sorted.map(r => `
     <div class="report-card card-hover" data-id="${r.id}">
+      <div class="rc-icon">${ICONS.file}</div>
       <div class="rc-title">${esc(r.title || 'Без назви')}</div>
       <div class="rc-meta">
-        <span>${esc(r.discipline || 'Без дисципліни')}</span>
+        <span class="badge">${esc(r.discipline || 'Без дисципліни')}</span>
         ${r.group   ? `<span>${esc(r.group)}</span>` : ''}
-        ${r.teacher ? `<span>${esc(r.teacher)}</span>` : ''}
-        <span>${fmtDate(r.created_at)}</span>
+        ${r.teacher ? `<span class="dot-sep">${esc(r.teacher)}</span>` : ''}
+        <span class="dot-sep">${fmtDate(r.created_at)}</span>
       </div>
       <div class="rc-actions">
-        <button class="btn btn-sm btn-ghost"  data-action="dl">Завантажити</button>
-        <button class="btn btn-sm btn-danger" data-action="del">Видалити</button>
+        <button class="btn btn-sm btn-ghost"  data-action="dl"  title="Завантажити .docx">${ICONS.download}</button>
+        <button class="btn btn-sm btn-danger" data-action="del" title="Видалити">${ICONS.trash}</button>
       </div>
     </div>`).join('');
 
@@ -461,7 +469,7 @@ function blockFieldsHtml(path, block, kind) {
                ondragover="event.preventDefault(); this.classList.add('drag')"
                ondragleave="this.classList.remove('drag')"
                ondrop="handleDrop(event,'${path}'); this.classList.remove('drag')">
-            Перетягніть зображення сюди або натисніть, щоб вибрати
+            ${ICONS.image} Перетягніть зображення або натисніть, щоб вибрати
           </div>
           <input type="file" id="fu-${id}" accept="image/*" multiple style="display:none"
                  onchange="handleFileInput(this, '${path}')">
@@ -484,7 +492,7 @@ function renderSections() {
         <span class="sec-num">${i + 1}</span>
         <input class="sec-name" placeholder="Назва розділу..."
                value="${esc(sec.title)}" oninput="sections[${i}].title = this.value">
-        <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})">Видалити</button>
+        <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})" title="Видалити розділ">${ICONS.trash}</button>
       </div>
       <div class="section-body">
         ${blockFieldsHtml(`${i}`, sec, 'розділу')}
@@ -494,13 +502,13 @@ function renderSections() {
             <span class="sec-num">${i + 1}.${j + 1}</span>
             <input class="sec-name" placeholder="Назва підрозділу..."
                    value="${esc(sub.title)}" oninput="sections[${i}].subsections[${j}].title = this.value">
-            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})">Видалити</button>
+            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})" title="Видалити підрозділ">${ICONS.trash}</button>
           </div>
           <div class="section-body">
             ${blockFieldsHtml(`${i}.${j}`, sub, 'підрозділу')}
           </div>
         </div>`).join('')}
-        <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">Додати підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
+        <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">${ICONS.plus} Підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
       </div>
     </div>`).join('');
 }

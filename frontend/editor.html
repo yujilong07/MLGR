@@ -3,25 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 <div class="app-layout">
 
   <aside class="sidebar">
     <div class="sb-logo">
-      <a href="dashboard.html">
-        <div class="logo-name">MLGR</div>
-        <div class="logo-sub">Звіти · ХНУРЕ</div>
+      <a href="dashboard.html" class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
+        <span><span class="logo-name">MLGR</span><span class="logo-sub" style="display:block">Звіти · ХНУРЕ</span></span>
       </a>
     </div>
 
     <nav class="nav-section">
-      <span class="nav-label">Розділи</span>
-      <a href="dashboard.html" class="nav-link">Мої звіти</a>
-      <a href="editor.html" class="nav-link active">Редактор</a>
+      <span class="nav-label">Робочий простір</span>
+      <a href="dashboard.html" class="nav-link">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+        Мої звіти
+      </a>
+      <a href="editor.html" class="nav-link active">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+        Редактор
+      </a>
     </nav>
 
     <div class="sb-footer">
@@ -29,7 +36,10 @@
         <div class="user-ava" id="sb-avatar">?</div>
         <div class="user-email" id="sb-email"></div>
       </div>
-      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">Вийти</button>
+      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+        Вийти
+      </button>
     </div>
   </aside>
 
@@ -38,15 +48,18 @@
     <div class="page-hdr">
       <div>
         <h1 id="editor-heading">Новий звіт</h1>
-        <p class="page-subtitle">Заповніть дані — документ з титулкою і змістом складеться автоматично</p>
+        <p class="page-subtitle">Титулка, зміст і нумерація складуться автоматично</p>
       </div>
       <div class="flex gap-8">
         <button id="btn-save" class="btn btn-secondary">Зберегти</button>
-        <button id="btn-generate" class="btn btn-primary">Завантажити .docx</button>
+        <button id="btn-generate" class="btn btn-primary">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+          Завантажити .docx
+        </button>
       </div>
     </div>
 
-    <div id="gen-progress" class="hidden" style="margin-bottom: 18px;">
+    <div id="gen-progress" class="hidden" style="margin-bottom: 20px;">
       <div class="progress-wrap"><div class="progress-fill" id="gen-fill" style="width:0%"></div></div>
       <p class="progress-lbl" id="gen-label">Складаємо документ…</p>
     </div>
@@ -57,7 +70,8 @@
 
         <section class="card">
           <div class="panel-head">
-            <h2 class="panel-title">Титульна сторінка і мета</h2>
+            <h2 class="panel-title">Основне</h2>
+            <span class="badge">Титульна сторінка</span>
           </div>
           <div class="panel-body">
             <div class="form-group">
@@ -88,7 +102,10 @@
         <section class="card">
           <div class="panel-head">
             <h2 class="panel-title">Розділи</h2>
-            <button id="btn-add-sec" class="btn btn-secondary btn-sm">Додати розділ</button>
+            <button id="btn-add-sec" class="btn btn-secondary btn-sm">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Розділ
+            </button>
           </div>
           <div class="panel-body">
             <div id="sections-container" class="form-stack"></div>
@@ -102,21 +119,22 @@
         <section class="card">
           <div class="panel-head">
             <h2 class="panel-title">Висновки</h2>
+            <span class="badge">можна редагувати</span>
           </div>
           <div class="panel-body">
             <p class="text-sm text-muted">
-              Чернетку пише модель: вона читає назву, мету, текст розділів і код саме цієї роботи.
-              Перевірте результат і виправте за потреби — текст можна редагувати, він збережеться разом зі звітом.
+              Модель прочитає назву, мету, розділи й код саме цієї роботи і напише чернетку.
+              Перевірте її перед здачею — текст зберігається разом зі звітом.
             </p>
             <textarea id="ai-output" class="conclusion-text"
                       placeholder="Тут з'явиться текст висновків. Можна написати й самостійно."></textarea>
-            <button id="btn-conclusion" class="btn btn-secondary btn-full">Написати чернетку висновків</button>
+            <button id="btn-conclusion" class="btn btn-primary btn-full">Написати чернетку</button>
           </div>
         </section>
 
         <section class="card">
           <div class="panel-head">
-            <h2 class="panel-title">Як це влаштовано</h2>
+            <h2 class="panel-title">Підказки</h2>
           </div>
           <div class="panel-body">
             <ul class="tips">
@@ -134,6 +152,6 @@
   </main>
 </div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

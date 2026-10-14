@@ -3,26 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Мої звіти — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 <div class="app-layout">
 
   <aside class="sidebar">
     <div class="sb-logo">
-      <a href="dashboard.html">
-        <div class="logo-name">MLGR</div>
-        <div class="logo-sub">Звіти · ХНУРЕ</div>
+      <a href="dashboard.html" class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
+        <span><span class="logo-name">MLGR</span><span class="logo-sub" style="display:block">Звіти · ХНУРЕ</span></span>
       </a>
     </div>
 
     <nav class="nav-section">
-      <span class="nav-label">Розділи</span>
-      <a href="#" id="nav-reports" class="nav-link active">Мої звіти</a>
-      <a href="#" id="nav-discs" class="nav-link">Дисципліни</a>
-      <a href="editor.html" class="nav-link">Новий звіт</a>
+      <span class="nav-label">Робочий простір</span>
+      <a href="#" id="nav-reports" class="nav-link active">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+        Мої звіти
+      </a>
+      <a href="#" id="nav-discs" class="nav-link">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H19"/></svg>
+        Дисципліни
+      </a>
+      <a href="editor.html" class="nav-link">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        Новий звіт
+      </a>
     </nav>
 
     <div class="sb-footer">
@@ -30,7 +40,10 @@
         <div class="user-ava" id="sb-avatar">?</div>
         <div class="user-email" id="sb-email"></div>
       </div>
-      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">Вийти</button>
+      <button id="sb-logout" class="btn btn-ghost btn-sm btn-full">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+        Вийти
+      </button>
     </div>
   </aside>
 
@@ -42,20 +55,26 @@
         <p class="page-subtitle" id="page-subtitle">Усі звіти, від нових до старих</p>
       </div>
       <div class="flex gap-8">
-        <button id="btn-back-disc" class="btn btn-secondary hidden">До списку дисциплін</button>
-        <button id="btn-new" class="btn btn-primary">Новий звіт</button>
+        <button id="btn-back-disc" class="btn btn-secondary hidden">← Усі дисципліни</button>
+        <button id="btn-new" class="btn btn-primary">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Новий звіт
+        </button>
       </div>
     </div>
 
     <div class="stats-bar">
-      <span><span class="stat-val" id="stat-total">—</span>звітів</span>
-      <span><span class="stat-val" id="stat-month">—</span>цього місяця</span>
-      <span><span class="stat-val" id="stat-discs">—</span>дисциплін</span>
+      <div class="stat"><span class="stat-lbl">Усього звітів</span><span class="stat-val" id="stat-total">—</span></div>
+      <div class="stat"><span class="stat-lbl">Цього місяця</span><span class="stat-val" id="stat-month">—</span></div>
+      <div class="stat"><span class="stat-lbl">Дисциплін</span><span class="stat-val" id="stat-discs">—</span></div>
     </div>
 
-    <div id="reports-section">
+    <div id="reports-section" class="list-box">
       <div class="toolbar">
-        <input id="search-input" type="search" placeholder="Пошук за назвою або дисципліною">
+        <div class="search">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="search-input" type="search" placeholder="Пошук за назвою або дисципліною">
+        </div>
       </div>
       <div id="reports-grid" class="reports-grid">
         <div class="empty-state"><p>Завантаження…</p></div>
@@ -69,6 +88,6 @@
   </main>
 </div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
