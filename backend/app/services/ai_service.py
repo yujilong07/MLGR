@@ -1,3 +1,4 @@
+import os
 import time
 import structlog
 from openai import OpenAI
@@ -10,7 +11,8 @@ client = OpenAI(
 
 logger = structlog.get_logger().bind(service="ai")
 
-_MODEL = "llama-3.3-70b-versatile"
+# Groq retires models periodically: list available ones via GET /openai/v1/models
+_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 _LANG_RULE = "Відповідай ВИКЛЮЧНО українською мовою. Не використовуй жодних слів іншими мовами."
 
 
@@ -109,6 +111,8 @@ def stream_conclusion(goal: str, sections: dict):
             stream=True,
         )
         for chunk in response:
+            if not chunk.choices:
+                continue
             text = chunk.choices[0].delta.content
             if text:
                 yield text
