@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -137,7 +138,9 @@ async def generate(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    task = generate_docx_task.delay(id)
+    # In eager mode (Render, no worker) .delay() runs the whole build incl. LibreOffice;
+    # keep it off the event loop so other requests are not blocked meanwhile
+    task = await run_in_threadpool(generate_docx_task.delay, id)
     return {"task_id": task.id}
 
 
@@ -166,9 +169,16 @@ async def generate_status(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+_DOWNLOAD_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+}
+
+
 @generate_router.get('/reports/{id}/download')
 async def download_report(
     id: int,
+    format: str = Query("docx", pattern="^(docx|pdf)$"),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -176,12 +186,9 @@ async def download_report(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    path = os.path.join(os.getenv("GENERATED_DIR", "/app/generated"), f'report_{id}.docx')
+    path = os.path.join(os.getenv("GENERATED_DIR", "/app/generated"), f'report_{id}.{format}')
     if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Not found")
+        detail = "PDF is not available on this server" if format == "pdf" else "Not found"
+        raise HTTPException(status_code=404, detail=detail)
 
-    return FileResponse(
-        path,
-        filename=f"report_{id}.docx",
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
+    return FileResponse(path, filename=f"report_{id}.{format}", media_type=_DOWNLOAD_TYPES[format])

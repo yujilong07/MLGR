@@ -189,3 +189,22 @@ def test_download_success(client, auth_headers, report_id, tmp_path):
         response = client.get(f"/reports/{report_id}/download", headers=auth_headers)
     assert response.status_code == 200
     assert "wordprocessingml" in response.headers["content-type"]
+
+
+def test_download_pdf_success(client, auth_headers, report_id, tmp_path, monkeypatch):
+    monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
+    (tmp_path / f"report_{report_id}.pdf").write_bytes(b"%PDF-1.7 fake")
+    response = client.get(f"/reports/{report_id}/download?format=pdf", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+
+
+def test_download_pdf_missing(client, auth_headers, report_id, tmp_path, monkeypatch):
+    monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
+    response = client.get(f"/reports/{report_id}/download?format=pdf", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_download_unknown_format(client, auth_headers, report_id):
+    response = client.get(f"/reports/{report_id}/download?format=exe", headers=auth_headers)
+    assert response.status_code == 422

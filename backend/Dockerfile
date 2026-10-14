@@ -1,6 +1,13 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 WORKDIR /app
+
+# LibreOffice renders the PDF preview; Liberation fonts are metric-compatible with
+# Times New Roman / Courier New, so page breaks match Word
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libreoffice-writer-nogui python3-uno fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
+ENV UNO_PYTHON=/usr/bin/python3 SOFFICE=soffice
 
 COPY requirements.txt .
 

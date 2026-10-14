@@ -82,6 +82,9 @@ const ICONS = {
   trash:    '<svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
   image:    '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>',
   plus:     '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  minus:    '<svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  x:        '<svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  eye:      '<svg class="icon" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -327,6 +330,7 @@ function renderGrid(query = '') {
         <span class="dot-sep">${fmtDate(r.created_at)}</span>
       </div>
       <div class="rc-actions">
+        <button class="btn btn-sm btn-ghost"  data-action="view" title="Переглянути">${ICONS.eye}</button>
         <button class="btn btn-sm btn-ghost"  data-action="dl"  title="Завантажити .docx">${ICONS.download}</button>
         <button class="btn btn-sm btn-danger" data-action="del" title="Видалити">${ICONS.trash}</button>
       </div>
@@ -339,6 +343,7 @@ function renderGrid(query = '') {
       if (!action) { window.location.href = `editor.html?id=${id}`; return; }
       if (action === 'del') deleteReport(id);
       if (action === 'dl')  downloadDocx(id);
+      if (action === 'view') openPreview(id, allReports.find(r => r.id === id)?.title);
     });
   });
 }
@@ -355,8 +360,12 @@ async function deleteReport(id) {
 }
 
 async function downloadDocx(id) {
-  try { await download(`/reports/${id}/download`, `report_${id}.docx`); }
-  catch (ex) { toast(ex.message, 'err'); }
+  const title = allReports.find(r => r.id === id)?.title;
+  try {
+    toast('Складаємо документ…');
+    await runGeneration(id);
+    await download(`/reports/${id}/download`, fileName(title, 'docx'));
+  } catch (ex) { toast(ex.message, 'err'); }
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -365,7 +374,6 @@ async function downloadDocx(id) {
 let reportId    = null;
 let sections    = [];
 let sse_conc    = null;
-let sse_gen     = null;
 
 async function initEditor() {
   auth.guard();
@@ -375,6 +383,7 @@ async function initEditor() {
   document.getElementById('btn-save')?.addEventListener('click', saveReport);
   document.getElementById('btn-conclusion')?.addEventListener('click', streamConclusion);
   document.getElementById('btn-generate')?.addEventListener('click', generateDocx);
+  document.getElementById('btn-preview')?.addEventListener('click', previewReport);
 
   const params = new URLSearchParams(window.location.search);
   reportId = params.get('id') ? parseInt(params.get('id')) : null;
@@ -642,57 +651,310 @@ async function streamConclusion() {
 
 /* ── generate docx ── */
 async function generateDocx() {
-  if (sse_gen) { sse_gen.close(); sse_gen = null; }
   if (!(await saveReport({ quiet: true }))) return;
 
-  const btn      = document.getElementById('btn-generate');
-  const pWrap    = document.getElementById('gen-progress');
-  const pFill    = document.getElementById('gen-fill');
-  const pLbl     = document.getElementById('gen-label');
+  const btn   = document.getElementById('btn-generate');
+  const pWrap = document.getElementById('gen-progress');
+  const pFill = document.getElementById('gen-fill');
+  const pLbl  = document.getElementById('gen-label');
 
   pWrap?.classList.remove('hidden');
-  if (pFill) pFill.style.width = '0%';
+  if (pFill) pFill.style.width = '15%';
   if (pLbl)  pLbl.textContent  = 'Складаємо документ…';
   setLoading(btn, true);
 
   try {
-    const genData = await req('POST', `/reports/${reportId}/generate`);
-
-    sse_gen = new EventSource(`${API_URL}/reports/${reportId}/generate/status?task_id=${genData.task_id}&token=${auth.token()}`);
-
-    sse_gen.onmessage = async e => {
-      const data = JSON.parse(e.data);
-      if (pFill) pFill.style.width = `${data.progress ?? 0}%`;
-      if (pLbl)  pLbl.textContent  = data.message || '';
-
-      if (data.status === 'done') {
-        sse_gen.close(); sse_gen = null;
-        pWrap?.classList.add('hidden');
-        setLoading(btn, false);
-        toast('Документ готовий');
-        try { await download(`/reports/${reportId}/download`, `report_${reportId}.docx`); }
-        catch (ex) { toast(ex.message, 'err'); }
-      } else if (data.status === 'error') {
-        sse_gen.close(); sse_gen = null;
-        pWrap?.classList.add('hidden');
-        setLoading(btn, false);
-        toast(data.message || 'Помилка генерації', 'err');
-      }
-    };
-
-    sse_gen.onerror = () => {
-      if (!sse_gen) return;   // already closed cleanly in onmessage — ignore
-      sse_gen.close(); sse_gen = null;
-      pWrap?.classList.add('hidden');
-      setLoading(btn, false);
-      toast('Помилка підключення', 'err');
-    };
-
+    await runGeneration(reportId, msg => {
+      if (pFill) pFill.style.width = '60%';
+      if (pLbl)  pLbl.textContent  = msg;
+    });
+    await download(`/reports/${reportId}/download`, fileName(currentTitle(), 'docx'));
+    toast('Документ готовий');
   } catch (ex) {
+    toast(ex.message, 'err');
+  } finally {
     pWrap?.classList.add('hidden');
     setLoading(btn, false);
-    toast(ex.message, 'err');
   }
+}
+
+async function previewReport() {
+  if (!(await saveReport({ quiet: true }))) return;
+  openPreview(reportId, currentTitle());
+}
+
+function currentTitle() {
+  return document.getElementById('f-title')?.value || `Звіт ${reportId}`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   GENERATION  (shared by editor and dashboard)
+═══════════════════════════════════════════════════════ */
+// Builds .docx (+ .pdf when the server has LibreOffice); resolves when files are ready
+function runGeneration(id, onStatus) {
+  return new Promise(async (resolve, reject) => {
+    let task;
+    try { task = await req('POST', `/reports/${id}/generate`); }
+    catch (ex) { reject(ex); return; }
+
+    let finished = false;
+    const es = new EventSource(`${API_URL}/reports/${id}/generate/status?task_id=${task.task_id}&token=${auth.token()}`);
+    const finish = (err) => {
+      if (finished) return;
+      finished = true;
+      es.close();
+      err ? reject(err) : resolve();
+    };
+    es.onmessage = e => {
+      const data = JSON.parse(e.data);
+      if (data.status === 'done')       finish();
+      else if (data.status === 'error') finish(new Error(data.message || 'Не вдалося скласти документ'));
+      else if (data.message)            onStatus?.(data.message);
+    };
+    es.onerror = () => finish(new Error('Втрачено зʼєднання з сервером'));
+  });
+}
+
+function fileName(title, ext) {
+  const base = String(title || 'Звіт').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `${base || 'Звіт'}.${ext}`;
+}
+
+async function fetchBytes(path) {
+  const res = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${auth.token()}` } });
+  if (res.status === 404) throw new Error('PDF_UNAVAILABLE');
+  if (!res.ok) throw new Error('Не вдалося завантажити файл');
+  return res.arrayBuffer();
+}
+
+/* ═══════════════════════════════════════════════════════
+   PREVIEW  (pdf.js viewer)
+═══════════════════════════════════════════════════════ */
+const PDFJS_URL    = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let pdfjsPromise = null;
+
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  pdfjsPromise ??= new Promise((resolve, reject) => {
+    const s = Object.assign(document.createElement('script'), { src: PDFJS_URL, async: true });
+    s.onload  = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; resolve(window.pdfjsLib); };
+    s.onerror = () => { pdfjsPromise = null; reject(new Error('Не вдалося завантажити переглядач PDF')); };
+    document.head.appendChild(s);
+  });
+  return pdfjsPromise;
+}
+
+const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
+async function openPreview(id, title) {
+  document.querySelector('.pv')?.remove();
+
+  const root = document.createElement('div');
+  root.className = 'pv';
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true');
+  root.setAttribute('aria-label', 'Попередній перегляд документа');
+  root.innerHTML = `
+    <header class="pv-bar">
+      <div class="pv-title">
+        <span class="pv-doc">${ICONS.file}</span>
+        <div><b>${esc(title)}</b><small class="pv-status">Готуємо документ…</small></div>
+      </div>
+      <div class="pv-tools" hidden>
+        <button class="pv-icon-btn" data-zoom="-1" title="Зменшити (−)">${ICONS.minus}</button>
+        <button class="pv-zoom-val" data-zoom="fit" title="Підігнати за шириною">100%</button>
+        <button class="pv-icon-btn" data-zoom="1" title="Збільшити (+)">${ICONS.plus}</button>
+        <span class="pv-sep"></span>
+        <span class="pv-counter">1 / 1</span>
+      </div>
+      <div class="pv-actions">
+        <button class="btn btn-secondary btn-sm" data-dl="docx">${ICONS.download} DOCX</button>
+        <button class="btn btn-primary btn-sm" data-dl="pdf" disabled>${ICONS.download} PDF</button>
+        <button class="pv-icon-btn pv-close" title="Закрити (Esc)">${ICONS.x}</button>
+      </div>
+    </header>
+    <div class="pv-body">
+      <aside class="pv-thumbs" hidden></aside>
+      <main class="pv-stage">
+        <div class="pv-pages">
+          <div class="pv-skeleton"><div class="pv-sk-line w40 c"></div><div class="pv-sk-line"></div><div class="pv-sk-line"></div><div class="pv-sk-line w70"></div><div class="pv-sk-gap"></div><div class="pv-sk-line"></div><div class="pv-sk-line w85"></div><div class="pv-sk-line"></div><div class="pv-sk-line w60"></div></div>
+        </div>
+      </main>
+    </div>`;
+  document.body.appendChild(root);
+  document.body.classList.add('pv-open');
+  requestAnimationFrame(() => root.classList.add('in'));
+
+  const $ = sel => root.querySelector(sel);
+  const status = msg => { $('.pv-status').textContent = msg; };
+  let pdf = null, scale = 1, fitScale = 1, observer = null, closed = false, userZoomed = false, resizeTimer = null, ready = false;
+
+  const close = () => {
+    closed = true;
+    observer?.disconnect();
+    pdf?.destroy();
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onResize);
+    document.body.classList.remove('pv-open');
+    root.classList.remove('in');
+    setTimeout(() => root.remove(), 180);
+  };
+  const onKey = e => {
+    if (e.key === 'Escape') close();
+    if (!pdf || e.target.matches('input, textarea')) return;
+    if (e.key === '+' || e.key === '=') setZoom(1);
+    if (e.key === '-') setZoom(-1);
+  };
+  // Keep "fit to width" while the user has not picked a zoom level themselves
+  const onResize = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!ready || userZoomed) return;
+      fitScale = computeFit();
+      if (Math.abs(fitScale - scale) > 0.01) { scale = fitScale; renderPages(); }
+    }, 150);
+  };
+  document.addEventListener('keydown', onKey);
+  window.addEventListener('resize', onResize);
+  $('.pv-close').onclick = close;
+  root.querySelectorAll('[data-dl]').forEach(b => b.onclick = async () => {
+    const fmt = b.dataset.dl;
+    try { await download(`/reports/${id}/download?format=${fmt}`, fileName(title, fmt)); }
+    catch (ex) { toast(ex.message, 'err'); }
+  });
+
+  try {
+    await runGeneration(id, status);
+    if (closed) return;
+    status('Відкриваємо попередній перегляд…');
+    const [lib, bytes] = await Promise.all([loadPdfJs(), fetchBytes(`/reports/${id}/download?format=pdf`)]);
+    if (closed) return;
+    pdf = await lib.getDocument({ data: bytes }).promise;
+  } catch (ex) {
+    if (closed) return;
+    const unavailable = ex.message === 'PDF_UNAVAILABLE';
+    status(unavailable ? 'Попередній перегляд недоступний' : 'Помилка');
+    $('.pv-pages').innerHTML = `
+      <div class="pv-message">
+        <h3>${unavailable ? 'На цьому сервері немає конвертера PDF' : 'Не вдалося підготувати перегляд'}</h3>
+        <p>${unavailable ? 'Документ .docx уже готовий — його можна завантажити кнопкою вгорі.' : esc(ex.message)}</p>
+      </div>`;
+    return;
+  }
+
+  $('[data-dl="pdf"]').disabled = false;
+  $('.pv-tools').hidden = false;
+  $('.pv-thumbs').hidden = false;
+  status(`${pdf.numPages} ${plural(pdf.numPages, 'сторінка', 'сторінки', 'сторінок')} · A4`);
+
+  const first = await pdf.getPage(1);
+  const base = first.getViewport({ scale: 1 });
+  const stage = $('.pv-stage');
+  const computeFit = () => {
+    const pad = stage.clientWidth < 700 ? 24 : 64;
+    return Math.min(1.25, Math.max(0.3, (stage.clientWidth - pad) / base.width));
+  };
+  fitScale = computeFit();
+  scale = fitScale;
+
+  renderThumbs();
+  renderPages();
+  ready = true;
+
+  root.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => setZoom(b.dataset.zoom));
+
+  function setZoom(dir) {
+    userZoomed = dir !== 'fit';
+    if (dir === 'fit') scale = fitScale = computeFit();
+    else {
+      const i = ZOOM_STEPS.findIndex(z => z >= scale - 0.001);
+      const cur = i === -1 ? ZOOM_STEPS.length - 1 : i;
+      scale = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, cur + Number(dir)))];
+    }
+    const ratio = stage.scrollTop / Math.max(1, stage.scrollHeight);
+    renderPages();
+    stage.scrollTop = ratio * stage.scrollHeight;
+  }
+
+  function renderPages() {
+    observer?.disconnect();
+    $('.pv-zoom-val').textContent = `${Math.round(scale * 100)}%`;
+    const wrap = $('.pv-pages');
+    wrap.innerHTML = '';
+    const vp = base.clone({ scale });
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = document.createElement('div');
+      page.className = 'pv-page';
+      page.dataset.page = n;
+      page.style.width = `${vp.width}px`;
+      page.style.height = `${vp.height}px`;
+      wrap.appendChild(page);
+    }
+    // Render lazily: only pages near the viewport get a canvas
+    observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        const el = entry.target;
+        if (entry.isIntersecting && !el.dataset.done) { el.dataset.done = '1'; drawPage(el, Number(el.dataset.page)); }
+      });
+      const visible = [...wrap.children].filter(el => {
+        const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+        return r.bottom > s.top + s.height * 0.35 && r.top < s.top + s.height * 0.65;
+      });
+      if (visible[0]) setCurrent(Number(visible[0].dataset.page));
+    }, { root: stage, rootMargin: '600px 0px', threshold: [0, 0.35, 0.65] });
+    wrap.querySelectorAll('.pv-page').forEach(el => observer.observe(el));
+    stage.onscroll = () => {
+      const s = stage.getBoundingClientRect();
+      const el = [...wrap.children].find(c => c.getBoundingClientRect().bottom > s.top + s.height * 0.4);
+      if (el) setCurrent(Number(el.dataset.page));
+    };
+  }
+
+  async function drawPage(el, n, target = el, s = scale) {
+    const page = await pdf.getPage(n);
+    const vp = page.getViewport({ scale: s });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(vp.width * dpr);
+    canvas.height = Math.floor(vp.height * dpr);
+    canvas.style.width = `${vp.width}px`;
+    canvas.style.height = `${vp.height}px`;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+    target.replaceChildren(canvas);
+    target.classList.add('ready');
+  }
+
+  async function renderThumbs() {
+    const box = $('.pv-thumbs');
+    box.innerHTML = '';
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const t = document.createElement('button');
+      t.className = 'pv-thumb';
+      t.dataset.page = n;
+      t.innerHTML = `<div class="pv-thumb-img" style="aspect-ratio:${base.width}/${base.height}"></div><span>${n}</span>`;
+      t.onclick = () => $(`.pv-page[data-page="${n}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      box.appendChild(t);
+    }
+    setCurrent(1);
+    for (let n = 1; n <= pdf.numPages && !closed; n++) {
+      const holder = box.querySelector(`.pv-thumb[data-page="${n}"] .pv-thumb-img`);
+      await drawPage(holder, n, holder, 116 / base.width);
+    }
+  }
+
+  function setCurrent(n) {
+    $('.pv-counter').textContent = `${n} / ${pdf.numPages}`;
+    root.querySelectorAll('.pv-thumb').forEach(t => t.classList.toggle('active', Number(t.dataset.page) === n));
+    root.querySelector('.pv-thumb.active')?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
 }
 
 /* ═══════════════════════════════════════════════════════

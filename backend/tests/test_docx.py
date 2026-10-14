@@ -66,3 +66,18 @@ def test_conclusion_in_document(tmp_path, monkeypatch):
 def test_a4_page(tmp_path, monkeypatch):
     section = _build(tmp_path, monkeypatch).sections[0]
     assert (round(section.page_width.mm), round(section.page_height.mm)) == (210, 297)
+
+
+def test_apply_toc_pages_replaces_cached_numbers(tmp_path, monkeypatch):
+    from app.services.docx_builder import apply_toc_pages
+
+    monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
+    path = build_report_docx(_report())
+    pages = {f"_Toc{i:08d}": 40 + i for i in range(1, 6)}
+    apply_toc_pages(path, pages)
+
+    doc = Document(path)
+    toc = [p for p in doc.paragraphs if p.style.name.startswith("toc ")]
+    numbers = ["".join(t.text for t in p._p.iter(qn("w:t"))).rsplit(" ", 1)[-1][-2:] for p in toc]
+    assert numbers == ["41", "42", "43", "44", "45"]
+    assert doc.settings.element.find(qn("w:updateFields")) is None

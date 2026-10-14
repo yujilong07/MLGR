@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div class="app-layout">
@@ -51,10 +51,14 @@
         <p class="page-subtitle">Титулка, зміст і нумерація складуться автоматично</p>
       </div>
       <div class="flex gap-8">
-        <button id="btn-save" class="btn btn-secondary">Зберегти</button>
-        <button id="btn-generate" class="btn btn-primary">
+        <button id="btn-save" class="btn btn-ghost">Зберегти</button>
+        <button id="btn-generate" class="btn btn-secondary">
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-          Завантажити .docx
+          .docx
+        </button>
+        <button id="btn-preview" class="btn btn-primary">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          Переглянути
         </button>
       </div>
     </div>
@@ -141,7 +145,7 @@
               <li>Скріншоти можна додавати після першого збереження звіту.</li>
               <li>Розділи нумеруються як «1», підрозділи — «1.1»; зміст збирається з їхніх назв.</li>
               <li>Код потрапляє в документ як лістинг (Courier New, 12 pt) з підписом.</li>
-              <li>Word при відкритті запропонує оновити поля — погодьтеся, щоб номери сторінок у змісті були точними.</li>
+              <li>«Переглянути» показує документ саме таким, яким він завантажиться, — звідти ж можна взяти PDF.</li>
             </ul>
           </div>
         </section>
@@ -152,6 +156,6 @@
   </main>
 </div>
 
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

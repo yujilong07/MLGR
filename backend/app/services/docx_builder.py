@@ -399,6 +399,33 @@ def add_image(document, image_path, image_number, caption_text):
     set_font(caption_run)
     return caption
 
+def apply_toc_pages(docx_path, pages):
+    """Replace the estimated page numbers cached in the TOC with the real ones
+    LibreOffice laid out (pdf_service), so Word no longer needs to update fields."""
+    document = Document(docx_path)
+    for instr in document.element.body.iter(qn('w:instrText')):
+        parts = (instr.text or '').split()
+        if len(parts) < 2 or parts[0] != 'PAGEREF' or parts[1] not in pages:
+            continue
+        # The cached result is the first text run after the field's "separate" mark
+        run, separated = instr.getparent().getnext(), False
+        while run is not None:
+            fld = run.find(qn('w:fldChar'))
+            kind = fld.get(qn('w:fldCharType')) if fld is not None else None
+            if kind == 'end':
+                break
+            if kind == 'separate':
+                separated = True
+            elif separated and run.find(qn('w:t')) is not None:
+                run.find(qn('w:t')).text = str(pages[parts[1]])
+                break
+            run = run.getnext()
+
+    for update in document.settings.element.findall(qn('w:updateFields')):
+        document.settings.element.remove(update)
+    document.save(docx_path)
+
+
 def build_report_docx(report, images=None, student_name=""):
     """Sections are numbered per ДСТУ 3008:2015: "1 НАЗВА РОЗДІЛУ", "1.1 Назва підрозділу".
     МЕТА РОБОТИ and ВИСНОВКИ are structural elements and stay unnumbered."""
