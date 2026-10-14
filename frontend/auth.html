@@ -3,65 +3,58 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#09090b">
-  <title>MLGR — Вхід</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#f6f4ef">
+  <title>Вхід — MLGR</title>
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body class="auth-body">
 
   <div class="auth-wrap">
 
-    <!-- logo (кліком → лендінг) -->
     <div class="auth-logo-block">
-      <a href="index.html" style="text-decoration:none;display:flex;align-items:center;gap:10px;justify-content:center">
-        <div class="logo-mark">⚗️</div>
-        <div>
-          <div class="logo-name">MLGR</div>
-          <div class="logo-sub">Lab Report Generator · ХНУРЕ</div>
-        </div>
+      <a href="index.html">
+        <div class="logo-name">MLGR</div>
+        <div class="logo-sub">Звіти до лабораторних робіт · ХНУРЕ</div>
       </a>
     </div>
 
-    <!-- card -->
     <div class="auth-card">
       <div class="auth-tabs">
         <button class="tab-btn active" data-tab="login">Вхід</button>
         <button class="tab-btn"        data-tab="register">Реєстрація</button>
       </div>
 
-      <!-- login -->
       <form id="form-login" class="auth-form">
         <div class="form-group">
           <label for="login-email">Email</label>
-          <input id="login-email" type="email" placeholder="you@nure.ua" autocomplete="email" required>
+          <input id="login-email" type="email" placeholder="ivan.petrenko@nure.ua" autocomplete="email" required>
         </div>
         <div class="form-group">
           <label for="login-pass">Пароль</label>
-          <input id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password" required>
+          <input id="login-pass" type="password" autocomplete="current-password" required>
         </div>
         <div id="login-err" class="error-box hidden"></div>
         <button type="submit" class="btn btn-primary btn-full btn-lg">Увійти</button>
       </form>
 
-      <!-- register -->
       <form id="form-register" class="auth-form hidden">
         <div class="form-group">
           <label for="reg-email">Email</label>
-          <input id="reg-email" type="email" placeholder="you@nure.ua" autocomplete="email" required>
+          <input id="reg-email" type="email" placeholder="ivan.petrenko@nure.ua" autocomplete="email" required>
         </div>
         <div class="form-group">
           <label for="reg-pass">Пароль</label>
-          <input id="reg-pass" type="password" placeholder="Мінімум 8 символів" autocomplete="new-password" required minlength="8">
+          <input id="reg-pass" type="password" placeholder="Щонайменше 8 символів" autocomplete="new-password" required minlength="8">
         </div>
         <div id="reg-err" class="error-box hidden"></div>
-        <button type="submit" class="btn btn-primary btn-full btn-lg">Зареєструватись</button>
+        <button type="submit" class="btn btn-primary btn-full btn-lg">Створити акаунт</button>
       </form>
     </div>
 
-    <a href="index.html" class="auth-hint" style="color:var(--text-faint)">← Повернутись на головну</a>
+    <a href="index.html" class="auth-hint">На головну</a>
 
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

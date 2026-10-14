@@ -3,34 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#09090b">
-  <title>MLGR — Дашборд</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#f6f4ef">
+  <title>Мої звіти — MLGR</title>
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div class="app-layout">
 
-  <!-- ════════════════ SIDEBAR ════════════════ -->
   <aside class="sidebar">
     <div class="sb-logo">
-      <div class="logo-mark">⚗️</div>
-      <div>
+      <a href="dashboard.html">
         <div class="logo-name">MLGR</div>
-        <div class="logo-sub">Lab Reports</div>
-      </div>
+        <div class="logo-sub">Звіти · ХНУРЕ</div>
+      </a>
     </div>
 
     <nav class="nav-section">
-      <span class="nav-label">Навігація</span>
-      <a href="#" id="nav-reports" class="nav-link active">
-        <span class="nav-ico">📋</span> Мої звіти
-      </a>
-      <a href="#" id="nav-discs" class="nav-link">
-        <span class="nav-ico">📚</span> Дисципліни
-      </a>
-      <a href="editor.html" class="nav-link">
-        <span class="nav-ico">✏️</span> Новий звіт
-      </a>
+      <span class="nav-label">Розділи</span>
+      <a href="#" id="nav-reports" class="nav-link active">Мої звіти</a>
+      <a href="#" id="nav-discs" class="nav-link">Дисципліни</a>
+      <a href="editor.html" class="nav-link">Новий звіт</a>
     </nav>
 
     <div class="sb-footer">
@@ -42,54 +34,34 @@
     </div>
   </aside>
 
-  <!-- ════════════════ MAIN ════════════════ -->
   <main class="main">
 
-    <!-- header -->
     <div class="page-hdr">
       <div>
-        <h1 class="page-title" id="page-title">Мої звіти</h1>
-        <p class="page-subtitle" id="page-subtitle">Всі лабораторні роботи в одному місці</p>
+        <h1 id="page-title">Мої звіти</h1>
+        <p class="page-subtitle" id="page-subtitle">Усі звіти, від нових до старих</p>
       </div>
-      <div class="flex gap-6">
-        <button id="btn-back-disc" class="btn btn-secondary hidden">← Всі дисципліни</button>
-        <button id="btn-new" class="btn btn-primary btn-lg">✦ Новий звіт</button>
+      <div class="flex gap-8">
+        <button id="btn-back-disc" class="btn btn-secondary hidden">До списку дисциплін</button>
+        <button id="btn-new" class="btn btn-primary">Новий звіт</button>
       </div>
     </div>
 
-    <!-- stats -->
     <div class="stats-bar">
-      <div class="card stat-card">
-        <div class="stat-ico">📄</div>
-        <div class="stat-val" id="stat-total">—</div>
-        <div class="stat-lbl">Всього звітів</div>
-      </div>
-      <div class="card stat-card">
-        <div class="stat-ico">📅</div>
-        <div class="stat-val" id="stat-month">—</div>
-        <div class="stat-lbl">Цього місяця</div>
-      </div>
-      <div class="card stat-card">
-        <div class="stat-ico">🎓</div>
-        <div class="stat-val" id="stat-discs">—</div>
-        <div class="stat-lbl">Дисциплін</div>
-      </div>
+      <span><span class="stat-val" id="stat-total">—</span>звітів</span>
+      <span><span class="stat-val" id="stat-month">—</span>цього місяця</span>
+      <span><span class="stat-val" id="stat-discs">—</span>дисциплін</span>
     </div>
 
-    <!-- reports section -->
     <div id="reports-section">
       <div class="toolbar">
-        <input id="search-input" type="search" placeholder="🔍  Пошук за назвою або дисципліною..." style="max-width:310px">
+        <input id="search-input" type="search" placeholder="Пошук за назвою або дисципліною">
       </div>
       <div id="reports-grid" class="reports-grid">
-        <div class="empty-state">
-          <div class="empty-ico">⏳</div>
-          <h3>Завантажуємо...</h3>
-        </div>
+        <div class="empty-state"><p>Завантаження…</p></div>
       </div>
     </div>
 
-    <!-- disciplines section -->
     <div id="disc-section" class="hidden">
       <div id="disc-grid" class="disc-grid"></div>
     </div>
@@ -97,6 +69,6 @@
   </main>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

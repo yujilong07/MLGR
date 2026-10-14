@@ -2,6 +2,7 @@ import asyncio
 import os
 import hashlib
 import json
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -10,10 +11,13 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models.report import Report
+from app.models.report import Report, ReportImage
 from app.models.user import User
 from app.services.auth_service import get_current_user, authenticate_token
-from app.services.ai_service import stream_conclusion, generate_introduction, improve_section_text
+from app.services.ai_service import (
+    stream_conclusion, generate_introduction, improve_section_text,
+    build_report_context, CONCLUSION_PROMPT_VERSION, _MODEL,
+)
 from app.services.cache_service import get_cached, set_cached
 from app.tasks.docx_task import generate_docx_task
 from app.tasks import celery
@@ -40,10 +44,15 @@ async def stream_conclusion_endpoint(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    content = report.goal + json.dumps(report.sections or {})
-    cache_key = "conclusion:" + hashlib.md5(content.encode()).hexdigest()
-    goal = report.goal
-    sections = report.sections or {}
+    images = session.exec(select(ReportImage).where(ReportImage.report_id == id)).all()
+    report_context = build_report_context(SimpleNamespace(
+        title=report.title, discipline=report.discipline, goal=report.goal,
+        sections=report.sections, images=images,
+    ))
+    # Any change to the report, the prompt or the model gives a new conclusion
+    cache_key = "conclusion:" + hashlib.md5(
+        f"{CONCLUSION_PROMPT_VERSION}|{_MODEL}|{report_context}".encode()
+    ).hexdigest()
 
     def save_conclusion(text: str):
         # Persist so the downloaded .docx contains the generated conclusion
@@ -63,9 +72,10 @@ async def stream_conclusion_endpoint(
             return
 
         full_text = ""
-        loop = asyncio.get_event_loop()
-        chunks = await loop.run_in_executor(None, lambda: list(stream_conclusion(goal, sections)))
-        for chunk in chunks:
+        loop = asyncio.get_running_loop()
+        tokens = stream_conclusion(report_context)
+        # Pull tokens one by one in a thread so they reach the browser as they arrive
+        while (chunk := await loop.run_in_executor(None, next, tokens, None)) is not None:
             full_text += chunk
             yield f'data: {json.dumps({"token": chunk})}\n\n'
 

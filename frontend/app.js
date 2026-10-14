@@ -213,7 +213,7 @@ function switchView(view) {
     discSection?.classList.remove('hidden');
     backBtn?.classList.add('hidden');
     if (titleEl)    titleEl.textContent    = 'Дисципліни';
-    if (subtitleEl) subtitleEl.textContent = 'Звіти згруповані по дисциплінах';
+    if (subtitleEl) subtitleEl.textContent = 'Звіти, згруповані за дисциплінами';
     renderDiscGrid();
   } else {
     reportsSection?.classList.remove('hidden');
@@ -221,11 +221,11 @@ function switchView(view) {
     if (activeDisc) {
       backBtn?.classList.remove('hidden');
       if (titleEl)    titleEl.textContent    = activeDisc;
-      if (subtitleEl) subtitleEl.textContent = 'Фільтр по дисципліні';
+      if (subtitleEl) subtitleEl.textContent = 'Звіти з цієї дисципліни';
     } else {
       backBtn?.classList.add('hidden');
       if (titleEl)    titleEl.textContent    = 'Мої звіти';
-      if (subtitleEl) subtitleEl.textContent = 'Всі лабораторні роботи в одному місці';
+      if (subtitleEl) subtitleEl.textContent = 'Усі звіти, від нових до старих';
     }
     renderGrid(document.getElementById('search-input')?.value ?? '');
   }
@@ -244,7 +244,7 @@ function renderDiscGrid() {
   const entries = Object.entries(map).sort((a, b) => b[1].length - a[1].length);
 
   if (!entries.length) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-ico">📚</div><h3>Немає дисциплін</h3><p>Додай перший звіт щоб з'явилась дисципліна</p></div>`;
+    grid.innerHTML = `<div class="empty-state"><h3>Дисциплін поки немає</h3><p>Вони з'являться, щойно ви створите перший звіт.</p></div>`;
     return;
   }
 
@@ -253,11 +253,10 @@ function renderDiscGrid() {
     const n       = reports.length;
     const label   = n === 1 ? 'звіт' : n < 5 ? 'звіти' : 'звітів';
     return `
-    <div class="card card-hover disc-card fade-in" data-disc="${esc(disc)}">
-      <div class="dc-icon">📚</div>
+    <div class="card card-hover disc-card" data-disc="${esc(disc)}">
       <div class="dc-name">${esc(disc)}</div>
       <div class="dc-count">${n} ${label}</div>
-      <div class="dc-date">Останній: ${fmtDate(latest.created_at)}</div>
+      <div class="dc-date">останній — ${fmtDate(latest.created_at)}</div>
     </div>`;
   }).join('');
 
@@ -303,29 +302,25 @@ function renderGrid(query = '') {
   if (!list.length) {
     grid.innerHTML = `
       <div class="empty-state">
-        <div class="empty-ico">📄</div>
-        <h3>${q ? 'Нічого не знайдено' : 'Ще немає звітів'}</h3>
-        <p>${q ? 'Спробуй інший пошук' : 'Натисни «Новий звіт» щоб почати'}</p>
+        <h3>${q ? 'Нічого не знайдено' : 'Звітів поки немає'}</h3>
+        <p>${q ? 'Спробуйте інший запит.' : 'Створіть перший — кнопка «Новий звіт» угорі праворуч.'}</p>
       </div>`;
     return;
   }
 
-  grid.innerHTML = list.map(r => `
-    <div class="card card-hover report-card fade-in" data-id="${r.id}">
-      <div class="rc-top">
-        <div class="rc-title">${esc(r.title)}</div>
-        <span class="badge badge-purple">${esc((r.discipline || '').slice(0, 14) || 'Без теми')}</span>
-      </div>
+  const sorted = [...list].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  grid.innerHTML = sorted.map(r => `
+    <div class="report-card card-hover" data-id="${r.id}">
+      <div class="rc-title">${esc(r.title || 'Без назви')}</div>
       <div class="rc-meta">
-        <div class="rc-row">👨‍🏫 ${esc(r.teacher || '—')}</div>
-        <div class="rc-row">👥 ${esc(r.group || '—')}</div>
+        <span>${esc(r.discipline || 'Без дисципліни')}</span>
+        ${r.group   ? `<span>${esc(r.group)}</span>` : ''}
+        ${r.teacher ? `<span>${esc(r.teacher)}</span>` : ''}
+        <span>${fmtDate(r.created_at)}</span>
       </div>
-      <div class="rc-footer">
-        <span class="rc-date">${fmtDate(r.created_at)}</span>
-        <div class="flex gap-6">
-          <button class="btn btn-sm btn-secondary" data-action="dl"  title="Скачати .docx">⬇</button>
-          <button class="btn btn-sm btn-danger"    data-action="del" title="Видалити">✕</button>
-        </div>
+      <div class="rc-actions">
+        <button class="btn btn-sm btn-ghost"  data-action="dl">Завантажити</button>
+        <button class="btn btn-sm btn-danger" data-action="del">Видалити</button>
       </div>
     </div>`).join('');
 
@@ -403,11 +398,7 @@ async function loadReport(id) {
     }));
     renderSections();
 
-    if (r.conclusion) {
-      const out = document.getElementById('ai-output');
-      out.textContent = r.conclusion;
-      out.classList.remove('placeholder');
-    }
+    document.getElementById('ai-output').value = r.conclusion || '';
   } catch (ex) { toast('Помилка завантаження: ' + ex.message, 'err'); }
 }
 
@@ -450,28 +441,27 @@ function blockFieldsHtml(path, block, kind) {
   return `
         <div class="form-group">
           <label>Текст ${kind}</label>
-          <textarea rows="4" placeholder="Опишіть хід роботи, результати спостережень..."
+          <textarea rows="4" placeholder="Що було зроблено, які результати отримано"
                     oninput="blockAt('${path}').text = this.value">${esc(block.text)}</textarea>
         </div>
         <div class="form-group">
-          <label>Код <span class="text-muted text-sm">(необов'язково)</span></label>
+          <label>Код <span class="text-muted">— якщо є</span></label>
           <div class="code-wrap">
             <div class="code-head">
               <select class="lang-select" onchange="blockAt('${path}').language = this.value">
                 ${LANGS.map(l => `<option value="${l}" ${block.language === l ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
-              <span class="text-sm text-muted font-mono">код</span>
             </div>
-            <textarea placeholder="# вставте код тут..." oninput="blockAt('${path}').code = this.value">${esc(block.code)}</textarea>
+            <textarea spellcheck="false" placeholder="Вставте код" oninput="blockAt('${path}').code = this.value">${esc(block.code)}</textarea>
           </div>
         </div>
         <div class="form-group">
-          <label>Скріншоти <span class="text-muted text-sm">(необов'язково)</span></label>
+          <label>Скріншоти <span class="text-muted">— якщо є</span></label>
           <div class="upload-zone" onclick="triggerUpload('${path}')"
                ondragover="event.preventDefault(); this.classList.add('drag')"
                ondragleave="this.classList.remove('drag')"
                ondrop="handleDrop(event,'${path}'); this.classList.remove('drag')">
-            📎 Натисни або перетягни зображення
+            Перетягніть зображення сюди або натисніть, щоб вибрати
           </div>
           <input type="file" id="fu-${id}" accept="image/*" multiple style="display:none"
                  onchange="handleFileInput(this, '${path}')">
@@ -484,17 +474,17 @@ function renderSections() {
   if (!container) return;
 
   if (!sections.length) {
-    container.innerHTML = '<p class="text-sm text-muted" style="text-align:center;padding:18px 0">Натисни «+ Розділ» щоб додати перший розділ</p>';
+    container.innerHTML = '<p class="text-sm text-muted" style="text-align:center;padding:14px 0">Розділів ще немає. Додайте перший — наприклад, «Хід роботи».</p>';
     return;
   }
 
   container.innerHTML = sections.map((sec, i) => `
-    <div class="section-item fade-in">
+    <div class="section-item">
       <div class="section-head">
         <span class="sec-num">${i + 1}</span>
         <input class="sec-name" placeholder="Назва розділу..."
                value="${esc(sec.title)}" oninput="sections[${i}].title = this.value">
-        <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})" title="Видалити розділ">✕</button>
+        <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})">Видалити</button>
       </div>
       <div class="section-body">
         ${blockFieldsHtml(`${i}`, sec, 'розділу')}
@@ -504,13 +494,13 @@ function renderSections() {
             <span class="sec-num">${i + 1}.${j + 1}</span>
             <input class="sec-name" placeholder="Назва підрозділу..."
                    value="${esc(sub.title)}" oninput="sections[${i}].subsections[${j}].title = this.value">
-            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})" title="Видалити підрозділ">✕</button>
+            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})">Видалити</button>
           </div>
           <div class="section-body">
             ${blockFieldsHtml(`${i}.${j}`, sub, 'підрозділу')}
           </div>
         </div>`).join('')}
-        <button class="btn btn-secondary btn-sm" onclick="addSubsection(${i})">+ Підрозділ ${i + 1}.${sec.subsections.length + 1}</button>
+        <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">Додати підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
       </div>
     </div>`).join('');
 }
@@ -530,7 +520,7 @@ async function handleFileInput(input, i) {
 }
 
 async function uploadFiles(files, sectionPath) {
-  if (!reportId) { toast('Спочатку збережи звіт', 'err'); return; }
+  if (!reportId) { toast('Спершу збережіть звіт — тоді можна додавати скріншоти', 'err'); return; }
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
@@ -562,9 +552,9 @@ function appendThumb(path, url, imgId) {
 function removeThumb(btn) { btn.closest('.img-thumb').remove(); }
 
 /* ── save ── */
-async function saveReport() {
+async function saveReport({ quiet = false } = {}) {
   const btn = document.getElementById('btn-save');
-  setLoading(btn, true);
+  if (!quiet) setLoading(btn, true);
 
   const payload = {
     title:      document.getElementById('f-title').value,
@@ -572,6 +562,7 @@ async function saveReport() {
     teacher:    document.getElementById('f-teacher').value,
     group:      document.getElementById('f-group').value,
     goal:       document.getElementById('f-goal').value,
+    conclusion: document.getElementById('ai-output').value,
     sections:   sections.map(s => ({
       title: s.title, text: s.text, code: s.code, language: s.language,
       subsections: s.subsections.map(b => ({ title: b.title, text: b.text, code: b.code, language: b.language })),
@@ -581,63 +572,70 @@ async function saveReport() {
   try {
     if (reportId) {
       await req('PATCH', `/reports/${reportId}`, payload);
-      toast('Збережено ✓');
+      if (!quiet) toast('Збережено');
     } else {
       const r = await req('POST', '/reports', payload);
       reportId = r.id;
       window.history.replaceState({}, '', `editor.html?id=${reportId}`);
       document.getElementById('editor-heading').textContent = 'Редагування звіту';
-      toast('Звіт створено ✓');
+      if (!quiet) toast('Звіт створено');
     }
-  } catch (ex) { toast(ex.message, 'err'); }
-  finally      { setLoading(btn, false); }
+    return true;
+  } catch (ex) { toast(ex.message, 'err'); return false; }
+  finally      { if (!quiet) setLoading(btn, false); }
 }
 
 /* ── AI conclusion SSE ── */
-function streamConclusion() {
-  if (!reportId) { toast('Спочатку збережи звіт', 'err'); return; }
-  if (sse_conc)  { sse_conc.close(); sse_conc = null; }
-
+async function streamConclusion() {
   const out = document.getElementById('ai-output');
-  const btn = document.getElementById('btn-conclusion');
+  if (out.value.trim() && !confirm('Замінити поточний текст висновків новою чернеткою?')) return;
+  if (sse_conc) { sse_conc.close(); sse_conc = null; }
 
-  out.classList.remove('placeholder');
+  // The draft is written from the saved report, so save the latest edits first
+  if (!(await saveReport({ quiet: true }))) return;
+
+  const btn = document.getElementById('btn-conclusion');
+  const previous = out.value;
+  out.value = '';
+  out.readOnly = true;
   out.classList.add('streaming');
-  out.innerHTML = '<span class="ai-cursor"></span>';
   setLoading(btn, true);
 
   let text = '';
+  const finish = () => {
+    sse_conc?.close(); sse_conc = null;
+    out.readOnly = false;
+    out.classList.remove('streaming');
+    setLoading(btn, false);
+  };
+
   sse_conc = new EventSource(`${API_URL}/reports/${reportId}/stream-conclusion?token=${auth.token()}`);
 
   sse_conc.onmessage = e => {
     const data = JSON.parse(e.data);
     if (data.token) {
       text += data.token;
-      out.innerHTML = esc(text) + '<span class="ai-cursor"></span>';
+      out.value = text;
       out.scrollTop = out.scrollHeight;
     }
     if (data.done) {
-      sse_conc.close(); sse_conc = null;
-      out.classList.remove('streaming');
-      out.textContent = text;
-      setLoading(btn, false);
-      toast('Висновок згенеровано ✓');
+      finish();
+      toast('Чернетку висновків готово — перевірте її');
     }
   };
 
   sse_conc.onerror = () => {
-    sse_conc?.close(); sse_conc = null;
-    out.classList.remove('streaming');
-    if (!text) { out.textContent = ''; out.classList.add('placeholder'); }
-    setLoading(btn, false);
-    toast('Помилка підключення до AI', 'err');
+    if (!sse_conc) return;
+    finish();
+    if (!text) out.value = previous;
+    toast('Не вдалося отримати висновки, спробуйте ще раз', 'err');
   };
 }
 
 /* ── generate docx ── */
 async function generateDocx() {
-  if (!reportId) { toast('Спочатку збережи звіт', 'err'); return; }
-  if (sse_gen)   { sse_gen.close(); sse_gen = null; }
+  if (sse_gen) { sse_gen.close(); sse_gen = null; }
+  if (!(await saveReport({ quiet: true }))) return;
 
   const btn      = document.getElementById('btn-generate');
   const pWrap    = document.getElementById('gen-progress');
@@ -646,7 +644,7 @@ async function generateDocx() {
 
   pWrap?.classList.remove('hidden');
   if (pFill) pFill.style.width = '0%';
-  if (pLbl)  pLbl.textContent  = 'Запускаємо генерацію...';
+  if (pLbl)  pLbl.textContent  = 'Складаємо документ…';
   setLoading(btn, true);
 
   try {
@@ -663,7 +661,7 @@ async function generateDocx() {
         sse_gen.close(); sse_gen = null;
         pWrap?.classList.add('hidden');
         setLoading(btn, false);
-        toast('Документ готовий! Завантажується...');
+        toast('Документ готовий');
         try { await download(`/reports/${reportId}/download`, `report_${reportId}.docx`); }
         catch (ex) { toast(ex.message, 'err'); }
       } else if (data.status === 'error') {
