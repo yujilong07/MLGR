@@ -1,0 +1,10 @@
+.git
+.github
+.vscode
+**/__pycache__
+**/.pytest_cache
+backend/venv
+backend/.venv
+backend/.env
+backend/generated
+backend/uploads
