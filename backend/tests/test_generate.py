@@ -87,6 +87,20 @@ def test_stream_conclusion_cached(client, auth_token, report_id, mock_cache):
     mock_fn.assert_not_called()
 
 
+def test_stream_conclusion_saved_to_report(client, auth_token, auth_headers, report_id):
+    with patch("app.routes.generate.stream_conclusion", return_value=iter(["Висновок", " готовий"])):
+        client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
+    report = client.get(f"/reports/{report_id}", headers=auth_headers).json()
+    assert report["conclusion"] == "Висновок готовий"
+
+
+def test_stream_conclusion_cached_saved_to_report(client, auth_token, auth_headers, report_id, mock_cache):
+    mock_cache.get.side_effect = lambda key: "Cached conclusion" if key.startswith("conclusion:") else None
+    client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
+    report = client.get(f"/reports/{report_id}", headers=auth_headers).json()
+    assert report["conclusion"] == "Cached conclusion"
+
+
 # ── generate docx (Celery task) ───────────────────────────────────────────────
 
 def test_generate_docx_no_auth(client):

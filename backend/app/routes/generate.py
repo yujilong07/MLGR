@@ -2,6 +2,7 @@ import asyncio
 import os
 import hashlib
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, FileResponse
@@ -44,9 +45,19 @@ async def stream_conclusion_endpoint(
     goal = report.goal
     sections = report.sections or {}
 
+    def save_conclusion(text: str):
+        # Persist so the downloaded .docx contains the generated conclusion
+        fresh = session.get(Report, id)
+        if fresh:
+            fresh.conclusion = text
+            fresh.updated_at = datetime.now(timezone.utc)
+            session.add(fresh)
+            session.commit()
+
     async def event_stream():
         cached = get_cached(cache_key)
         if cached:
+            save_conclusion(cached)
             yield f'data: {json.dumps({"token": cached})}\n\n'
             yield f'data: {json.dumps({"done": True})}\n\n'
             return
@@ -58,6 +69,7 @@ async def stream_conclusion_endpoint(
             full_text += chunk
             yield f'data: {json.dumps({"token": chunk})}\n\n'
 
+        save_conclusion(full_text)
         yield f'data: {json.dumps({"done": True})}\n\n'
         set_cached(cache_key, full_text, ttl=86400)
 

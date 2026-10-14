@@ -13,7 +13,11 @@ logger = structlog.get_logger().bind(service="ai")
 
 # Groq retires models periodically: list available ones via GET /openai/v1/models
 _MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-_LANG_RULE = "Відповідай ВИКЛЮЧНО українською мовою. Не використовуй жодних слів іншими мовами."
+_LANG_RULE = (
+    "Відповідай ВИКЛЮЧНО українською мовою. Не використовуй жодних слів іншими мовами. "
+    # Text goes straight into a .docx, so markdown symbols would show up literally
+    "Пиши звичайним суцільним текстом без Markdown: без **, #, таблиць і маркованих списків."
+)
 
 
 def generate_introduction(goal: str) -> str:
@@ -103,6 +107,9 @@ def stream_conclusion(goal: str, sections: dict):
                     "role": "system",
                     "content": (
                         "Ти асистент який пише висновки до лабораторних робіт. "
+                        "Напиши 1–2 абзаци в безособовій формі академічним стилем, "
+                        "наприклад: «У ході виконання лабораторної роботи було...». "
+                        "Не додавай заголовок «Висновки». "
                         + _LANG_RULE
                     ),
                 },
