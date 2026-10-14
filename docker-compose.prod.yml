@@ -1,0 +1,81 @@
+# Production: docker compose -f docker-compose.prod.yml up -d --build
+# Needs a .env file next to this one (see deploy/.env.example)
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lab_report_db
+  REDIS_URL: redis://redis:6379
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+  GROQ_API_KEY: ${GROQ_API_KEY:?set GROQ_API_KEY in .env}
+  UPLOADS_DIR: /app/uploads
+  GENERATED_DIR: /app/generated
+
+services:
+  backend:
+    build: ./backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+    environment: *backend-env
+    volumes:
+      - generated_files:/app/generated
+      - uploaded_images:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  celery_worker:
+    build: ./backend
+    command: celery -A app.tasks worker --loglevel=info --concurrency=2
+    environment: *backend-env
+    volumes:
+      - generated_files:/app/generated
+      - uploaded_images:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: lab_report_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  generated_files:
+  uploaded_images:
+  caddy_data:
+  caddy_config:

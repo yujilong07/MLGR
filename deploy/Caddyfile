@@ -1,0 +1,16 @@
+# DOMAIN=mlgr.duckdns.org -> automatic HTTPS (Let's Encrypt)
+# DOMAIN=:80              -> plain HTTP by IP address
+{$DOMAIN} {
+	handle_path /api/* {
+		reverse_proxy backend:8000 {
+			# SSE (conclusion streaming, generation status) must not be buffered
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode gzip
+		root * /srv
+		file_server
+	}
+}

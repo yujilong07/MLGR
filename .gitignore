@@ -16,9 +16,6 @@ venv/
 *.env
 backend/.env
 
-# Alembic
-backend/migrations/versions/
-
 # Uploads
 backend/uploads/
 

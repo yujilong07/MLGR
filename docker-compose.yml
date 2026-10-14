@@ -10,6 +10,9 @@ services:
       - uploaded_images:/app/uploads
     env_file:
       - ./backend/.env
+    environment:
+      UPLOADS_DIR: /app/uploads
+      GENERATED_DIR: /app/generated
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,6 +28,9 @@ services:
       - uploaded_images:/app/uploads
     env_file:
       - ./backend/.env
+    environment:
+      UPLOADS_DIR: /app/uploads
+      GENERATED_DIR: /app/generated
     depends_on:
       postgres:
         condition: service_healthy

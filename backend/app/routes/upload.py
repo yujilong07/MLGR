@@ -24,7 +24,9 @@ async def upload_image(
 
     ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'png'
     filename = f"{uuid.uuid4()}.{ext}"
-    path = os.path.join("/app/uploads", filename)
+    uploads_dir = os.getenv("UPLOADS_DIR", "/app/uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+    path = os.path.join(uploads_dir, filename)
     with open(path, "wb") as f:
         f.write(await file.read())
 

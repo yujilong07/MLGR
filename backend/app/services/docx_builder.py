@@ -1,5 +1,5 @@
 from docx import Document
-from docx.shared import Pt, Cm, Mm, Inches
+from docx.shared import Pt, Cm, Mm, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -7,8 +7,18 @@ from datetime import datetime
 import os
 
 
-def set_font(run, size=14, bold=False):
-    run.font.name = 'Times New Roman'
+def _set_font_name(rpr_owner, name):
+    """font.name only sets ascii/hAnsi; also pin eastAsia/cs so theme fonts don't leak in."""
+    rpr_owner.font.name = name
+    rFonts = rpr_owner.element.rPr.rFonts
+    for attr in ('w:eastAsia', 'w:cs'):
+        rFonts.set(qn(attr), name)
+    for attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:cstheme'):
+        rFonts.attrib.pop(qn(attr), None)
+
+
+def set_font(run, size=14, bold=False, name='Times New Roman'):
+    _set_font_name(run, name)
     run.font.size = Pt(size)
     run.bold = bold
 
@@ -23,11 +33,28 @@ def create_base_doc():
     section.bottom_margin = Mm(20)
 
     normal = document.styles['Normal']
-    normal.font.name = 'Times New Roman'
+    _set_font_name(normal, 'Times New Roman')
     normal.font.size = Pt(14)
     normal.paragraph_format.line_spacing = 1.5
     normal.paragraph_format.first_line_indent = Cm(1.25)
     normal.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    normal.paragraph_format.space_before = Pt(0)
+    normal.paragraph_format.space_after = Pt(0)
+    lang = OxmlElement('w:lang')
+    lang.set(qn('w:val'), 'uk-UA')
+    normal.element.get_or_add_rPr().append(lang)
+
+    # Default heading styles are blue Calibri Light — make them plain black TNR
+    for level in (1, 2, 3):
+        style = document.styles[f'Heading {level}']
+        _set_font_name(style, 'Times New Roman')
+        style.font.size = Pt(14)
+        style.font.bold = True
+        style.font.italic = False
+        style.font.color.rgb = RGBColor(0, 0, 0)
+        style.paragraph_format.space_before = Pt(0)
+        style.paragraph_format.space_after = Pt(0)
+        style.paragraph_format.line_spacing = 1.5
 
     return document
 
@@ -50,6 +77,8 @@ def _remove_table_borders(table):
     if tblPr is None:
         tblPr = OxmlElement('w:tblPr')
         tbl.insert(0, tblPr)
+    for old in tblPr.findall(qn('w:tblBorders')):
+        tblPr.remove(old)
     tblBorders = OxmlElement('w:tblBorders')
     for name in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
         el = OxmlElement(f'w:{name}')
@@ -58,7 +87,17 @@ def _remove_table_borders(table):
         el.set(qn('w:space'), '0')
         el.set(qn('w:color'), 'auto')
         tblBorders.append(el)
-    tblPr.append(tblBorders)
+    # Schema order matters: tblBorders must precede shd/tblLayout/tblCellMar/tblLook,
+    # otherwise Word reports the file as corrupted
+    successor = None
+    for tag in ('w:shd', 'w:tblLayout', 'w:tblCellMar', 'w:tblLook', 'w:tblCaption', 'w:tblDescription'):
+        successor = tblPr.find(qn(tag))
+        if successor is not None:
+            break
+    if successor is not None:
+        successor.addprevious(tblBorders)
+    else:
+        tblPr.append(tblBorders)
 
 
 def add_title_page(document, report, student_name=""):
@@ -113,29 +152,29 @@ def add_table_of_contents(document, headings=None):
     p.paragraph_format.first_line_indent = Cm(0)
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(0)
-    r = p.add_run()
 
     fc = OxmlElement('w:fldChar')
     fc.set(qn('w:fldCharType'), 'begin')
-    r._r.append(fc)
+    p.add_run()._r.append(fc)
 
     instr = OxmlElement('w:instrText')
     instr.set(qn('xml:space'), 'preserve')
     instr.text = ' TOC \\o "1-3" \\h \\z \\u '
-    r._r.append(instr)
+    p.add_run()._r.append(instr)
 
     fc2 = OxmlElement('w:fldChar')
     fc2.set(qn('w:fldCharType'), 'separate')
-    r._r.append(fc2)
+    p.add_run()._r.append(fc2)
 
     # Pre-populated entries visible before Word updates the field
     for text, level in (headings or []):
         ep = document.add_paragraph()
         ep.paragraph_format.first_line_indent = Cm(0)
         ep.paragraph_format.space_before = Pt(0)
-        ep.paragraph_format.space_after = Pt(2)
+        ep.paragraph_format.space_after = Pt(0)
         ep.paragraph_format.left_indent = Cm((level - 1) * 1.25)
-        set_font(ep.add_run(text), size=14)
+        ep.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        set_font(ep.add_run(text.upper() if level == 1 else text), size=14)
 
     # Field end
     p_end = document.add_paragraph()
@@ -169,22 +208,29 @@ def add_heading(document, text, level=1):
     return paragraph
 
 def add_paragraph_text(document, text):
-    paragraph = document.add_paragraph()
-    run = paragraph.add_run(text)
-    set_font(run)
-    return paragraph    
+    """Each non-empty line becomes its own paragraph: manual line breaks inside a
+    justified paragraph make Word stretch the line across the full width."""
+    paragraph = None
+    for line in (text or "").replace('\r\n', '\n').split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        paragraph = document.add_paragraph()
+        set_font(paragraph.add_run(line))
+    return paragraph
 
 def add_listing(document, code, listing_number, title):
     caption = document.add_paragraph()
     caption_run = caption.add_run(f"Лістинг {listing_number} – {title}")
     set_font(caption_run)
     caption.paragraph_format.first_line_indent = Cm(0)
-    
+    caption.paragraph_format.keep_with_next = True
+
     code_paragraph = document.add_paragraph()
-    code_run = code_paragraph.add_run(code)
-    code_run.font.name = 'Courier New'
-    code_run.font.size = Pt(12)
+    code_run = code_paragraph.add_run(code.replace('\r\n', '\n').rstrip('\n'))
+    set_font(code_run, size=12, name='Courier New')
     code_paragraph.paragraph_format.first_line_indent = Cm(0)
+    code_paragraph.paragraph_format.line_spacing = 1.0
     code_paragraph.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     return code_paragraph
 
@@ -193,6 +239,8 @@ def add_image(document, image_path, image_number, caption_text):
     img_paragraph = document.add_paragraph()
     img_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     img_paragraph.paragraph_format.first_line_indent = Cm(0)
+    img_paragraph.paragraph_format.line_spacing = 1.0
+    img_paragraph.paragraph_format.keep_with_next = True
     run = img_paragraph.add_run()
     run.add_picture(image_path, width=Inches(5))
 

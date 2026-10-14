@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 sqlmodel
 psycopg2-binary
+psycopg[binary]
 alembic
 redis
 celery
