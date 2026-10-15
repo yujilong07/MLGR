@@ -690,7 +690,7 @@ function currentTitle() {
 /* ═══════════════════════════════════════════════════════
    GENERATION  (shared by editor and dashboard)
 ═══════════════════════════════════════════════════════ */
-// Builds .docx (+ .pdf when the server has LibreOffice); resolves when files are ready
+// Builds .docx + .pdf on the server; resolves when the files are ready
 function runGeneration(id, onStatus) {
   return new Promise(async (resolve, reject) => {
     let task;

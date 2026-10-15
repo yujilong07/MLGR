@@ -12,6 +12,8 @@ bcrypt==4.0.1
 python-multipart
 openai
 python-docx
+# 70.x: URLFetcher API used in pdf_builder
+weasyprint>=70,<71
 structlog
 pytest
 pytest-asyncio

@@ -9,6 +9,8 @@ from datetime import datetime
 import math
 import os
 
+from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, text_lines
+
 # A4, margins 30/20/20/20 mm (ДСТУ 3008:2015)
 TEXT_WIDTH = Mm(160)
 TEXT_HEIGHT_PT = (297 - 40) * 72 / 25.4
@@ -59,8 +61,7 @@ class PageEstimator:
         self.add(height_emu / 12700 + LINE_PT, keep_together=True)
 
 
-def _lines(text):
-    return [l.strip() for l in (text or "").replace('\r\n', '\n').split('\n') if l.strip()]
+_lines = text_lines
 
 
 def _insert_before_successors(parent, element, successor_tags):
@@ -400,8 +401,8 @@ def add_image(document, image_path, image_number, caption_text):
     return caption
 
 def apply_toc_pages(docx_path, pages):
-    """Replace the estimated page numbers cached in the TOC with the real ones
-    LibreOffice laid out (pdf_service), so Word no longer needs to update fields."""
+    """Replace the estimated page numbers cached in the TOC with the ones from the
+    PDF layout (pdf_builder), so Word no longer needs to update fields."""
     document = Document(docx_path)
     for instr in document.element.body.iter(qn('w:instrText')):
         parts = (instr.text or '').split()
@@ -427,62 +428,30 @@ def apply_toc_pages(docx_path, pages):
 
 
 def build_report_docx(report, images=None, student_name=""):
-    """Sections are numbered per ДСТУ 3008:2015: "1 НАЗВА РОЗДІЛУ", "1.1 Назва підрозділу".
-    МЕТА РОБОТИ and ВИСНОВКИ are structural elements and stay unnumbered."""
     document = create_base_doc()
     add_title_page(document, report, student_name)
     toc_placeholder = add_table_of_contents(document)
 
-    sections = report.sections or []
     # Body starts after the title page and the TOC page(s)
-    toc_lines = 3 + sum(1 + len(sec.get('subsections') or []) for sec in sections)
+    toc_lines = 3 + sum(1 + len(sec.get('subsections') or []) for sec in report.sections or [])
     toc_pages = math.ceil(toc_lines * LINE_PT / TEXT_HEIGHT_PT)
     pages = PageEstimator(start_page=2 + toc_pages)
     toc_headings = []
 
-    def heading(text, level=1):
-        bookmark = f'_Toc{len(toc_headings) + 1:08d}'
-        pages.heading()
-        toc_headings.append((text.upper() if level == 1 else text, level, bookmark, pages.page))
-        add_heading(document, text, level=level, bookmark=bookmark)
-
-    images_by_section = {}
-    for img in images or []:
-        images_by_section.setdefault(img.section_path, []).append(img)
-
-    counters = {'listing': 1, 'image': 1}
-
-    def content(block, title, section_path):
-        if block.get('text'):
-            add_paragraph_text(document, block['text'])
-            pages.text(block['text'])
-        if block.get('code'):
-            add_listing(document, block['code'], counters['listing'], title)
-            pages.code(block['code'])
-            counters['listing'] += 1
-        for img in images_by_section.get(section_path, []):
-            img_path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), img.filename)
-            if os.path.exists(img_path):
-                add_image(document, img_path, counters['image'], img.caption)
-                pages.image(image_height(img_path))
-                counters['image'] += 1
-
-    heading("Мета роботи")
-    add_paragraph_text(document, report.goal)
-    pages.text(report.goal)
-
-    for idx, section in enumerate(sections):
-        title = (section.get('title') or '').strip() or f'Розділ {idx + 1}'
-        heading(f"{idx + 1} {title}")
-        content(section, title, str(idx))
-
-        for sub_idx, sub in enumerate(section.get('subsections') or []):
-            sub_title = (sub.get('title') or '').strip() or f'Підрозділ {idx + 1}.{sub_idx + 1}'
-            heading(f"{idx + 1}.{sub_idx + 1} {sub_title}", level=2)
-            content(sub, sub_title, f"{idx}.{sub_idx}")
-
-    heading("Висновки")
-    add_paragraph_text(document, report.conclusion)
+    for block in iter_report_blocks(report, images):
+        if isinstance(block, Heading):
+            pages.heading()
+            toc_headings.append((block.toc_text, block.level, block.bookmark, pages.page))
+            add_heading(document, block.text, level=block.level, bookmark=block.bookmark)
+        elif isinstance(block, Text):
+            add_paragraph_text(document, block.text)
+            pages.text(block.text)
+        elif isinstance(block, Listing):
+            add_listing(document, block.code, block.number, block.title)
+            pages.code(block.code)
+        elif isinstance(block, Figure):
+            add_image(document, block.path, block.number, block.caption)
+            pages.image(image_height(block.path))
 
     fill_table_of_contents(toc_placeholder, toc_headings)
 
