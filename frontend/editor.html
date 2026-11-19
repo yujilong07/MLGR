@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <div class="app-layout">
@@ -92,9 +92,27 @@
                 <input id="f-group" type="text" placeholder="КІТІ-23-1">
               </div>
             </div>
-            <div class="form-group">
-              <label for="f-teacher">Викладач</label>
-              <input id="f-teacher" type="text" placeholder="Іваненко І. І.">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="f-student">Студент</label>
+                <div class="person-field">
+                  <input id="f-student" type="text" placeholder="Петренко О. О.">
+                  <div class="seg" role="radiogroup" aria-label="Стать студента" data-gender="student">
+                    <button type="button" data-g="m" role="radio">Виконав</button>
+                    <button type="button" data-g="f" role="radio">Виконала</button>
+                  </div>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="f-teacher">Викладач</label>
+                <div class="person-field">
+                  <input id="f-teacher" type="text" placeholder="Іваненко І. І.">
+                  <div class="seg" role="radiogroup" aria-label="Стать викладача" data-gender="teacher">
+                    <button type="button" data-g="m" role="radio">Прийняв</button>
+                    <button type="button" data-g="f" role="radio">Прийняла</button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="form-group">
               <label for="f-goal">Мета роботи</label>
@@ -113,12 +131,35 @@
           </div>
           <div class="panel-body">
             <div id="sections-container" class="form-stack"></div>
+            <button id="btn-add-sec-bottom" class="btn btn-ghost btn-sm add-sec-bottom">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Додати розділ
+            </button>
           </div>
         </section>
 
       </div>
 
       <div class="ai-panel">
+
+        <section class="card outline-card">
+          <div class="panel-head">
+            <h2 class="panel-title">Структура</h2>
+            <button id="btn-add-sec-side" class="btn btn-secondary btn-sm" title="Додати розділ">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Розділ
+            </button>
+          </div>
+          <nav id="outline" class="outline" aria-label="Структура звіту"></nav>
+          <div class="readiness">
+            <div class="readiness-head">
+              <span class="text-sm">Готовність</span>
+              <span id="readiness-val" class="text-sm text-muted">0 / 0</span>
+            </div>
+            <div class="progress-wrap"><div class="progress-fill" id="readiness-fill" style="width:0%"></div></div>
+            <div id="readiness-missing" class="missing"></div>
+          </div>
+        </section>
 
         <section class="card">
           <div class="panel-head">
@@ -128,27 +169,27 @@
           <div class="panel-body">
             <p class="text-sm text-muted">
               Модель прочитає назву, мету, розділи й код саме цієї роботи і напише чернетку.
-              Перевірте її перед здачею — текст зберігається разом зі звітом.
+              Велику роботу вона спершу опрацює частинами. Перевірте текст перед здачею.
             </p>
             <textarea id="ai-output" class="conclusion-text"
                       placeholder="Тут з'явиться текст висновків. Можна написати й самостійно."></textarea>
+            <p id="conc-status" class="text-sm text-muted hidden"></p>
             <button id="btn-conclusion" class="btn btn-primary btn-full">Написати чернетку</button>
           </div>
         </section>
 
-        <section class="card">
-          <div class="panel-head">
-            <h2 class="panel-title">Підказки</h2>
-          </div>
+        <details class="card tips-card">
+          <summary class="panel-head"><span class="panel-title">Підказки</span></summary>
           <div class="panel-body">
             <ul class="tips">
               <li>Скріншоти можна додавати після першого збереження звіту.</li>
               <li>Розділи нумеруються як «1», підрозділи — «1.1»; зміст збирається з їхніх назв.</li>
               <li>Код потрапляє в документ як лістинг (Courier New, 12 pt) з підписом.</li>
-              <li>«Переглянути» показує документ саме таким, яким він завантажиться, — звідти ж можна взяти PDF.</li>
+              <li>«Переглянути» відкриває документ, який можна правити прямо на сторінці, а вкладка PDF показує точний вигляд.</li>
+              <li><span class="kbd">Ctrl</span> + <span class="kbd">S</span> — зберегти.</li>
             </ul>
           </div>
-        </section>
+        </details>
 
       </div>
     </div>
@@ -156,6 +197,6 @@
   </main>
 </div>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
