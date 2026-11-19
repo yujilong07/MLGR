@@ -55,7 +55,7 @@ def text_lines(text):
 def iter_report_blocks(report, images=None):
     uploads_dir = os.getenv("UPLOADS_DIR", "/app/uploads")
     images_by_section = {}
-    for img in images or []:
+    for img in sorted(images or [], key=lambda i: (getattr(i, "position", 0) or 0, i.id or 0)):
         images_by_section.setdefault(img.section_path, []).append(img)
 
     headings = 0

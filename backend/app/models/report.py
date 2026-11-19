@@ -1,7 +1,7 @@
 from sqlmodel import SQLModel, Field
 from datetime import datetime, timezone
 from typing import Any, Optional
-from sqlalchemy import Column
+from sqlalchemy import Column, LargeBinary
 from sqlalchemy.dialects.postgresql import JSON
 
 class Report(SQLModel,table = True):
@@ -27,4 +27,14 @@ class ReportImage(SQLModel, table=True):
     filename : str
     caption : str
     section_path : str
+    # order of the figures inside one section (lower first)
+    position : int = Field(default=0)
     created_at : datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ImageBlob(SQLModel, table=True):
+    """Image bytes live in the database: the container disk (Render) is wiped on every
+    restart, so files in UPLOADS_DIR are only a cache. Separate table so that listing
+    images never loads the bytes."""
+    image_id : int = Field(foreign_key="reportimage.id", primary_key=True)
+    data : bytes = Field(sa_column=Column(LargeBinary, nullable=False))

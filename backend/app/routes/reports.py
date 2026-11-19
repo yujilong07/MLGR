@@ -1,5 +1,3 @@
-import os
-import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -9,6 +7,7 @@ from app.models.report import Report, ReportImage
 from app.models.user import User
 from app.schemas.report import ReportCreate, ReportUpdate, ReportResponse
 from app.services.auth_service import get_current_user
+from app.services.image_store import delete_image as remove_image, is_available, ordered, save_image
 
 reports_router = APIRouter()
 
@@ -63,6 +62,8 @@ async def delete_report_by_id(id: int, current_user: User = Depends(get_current_
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    for image in session.exec(select(ReportImage).where(ReportImage.report_id == id)).all():
+        remove_image(session, image, commit=False)
     session.delete(report)
     session.commit()
     return None
@@ -80,35 +81,25 @@ async def upload_image(
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    ext = file.filename.split('.')[-1]
-    filename = f"{uuid.uuid4()}.{ext}"
-    path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), filename)
-    with open(path, "wb") as f:
-        f.write(await file.read())
-
-    image = ReportImage(
-        report_id=id,
-        filename=filename,
-        caption=caption,
-        section_path=section_path
-    )
-    session.add(image)
-    session.commit()
-    session.refresh(image)
+    image = save_image(session, id, await file.read(), section_path, caption)
     return {"id": image.id, "filename": image.filename, "caption": image.caption}
 
 class ImageUpdate(BaseModel):
     caption: Optional[str] = None
     # moves the image when sections are deleted or reordered: "0" / "0.1"
     section_path: Optional[str] = Field(default=None, pattern=r"^\d+(\.\d+)?$")
+    position: Optional[int] = Field(default=None, ge=0)
 
 
-def _image_out(image: ReportImage):
+def _image_out(image: ReportImage, available: bool = True):
     return {
         "id": image.id,
         "url": f"/uploads/{image.filename}",
         "caption": image.caption,
         "section_path": image.section_path,
+        "position": image.position,
+        # False for old uploads whose file was wiped from the server before bytes went to the DB
+        "available": available,
     }
 
 
@@ -128,8 +119,8 @@ async def list_images(id: int, current_user: User = Depends(get_current_user), s
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    images = session.exec(select(ReportImage).where(ReportImage.report_id == id).order_by(ReportImage.id)).all()
-    return [_image_out(img) for img in images]
+    images = ordered(session.exec(select(ReportImage).where(ReportImage.report_id == id)).all())
+    return [_image_out(img, is_available(session, img)) for img in images]
 
 
 @reports_router.patch('/{id}/images/{image_id}')
@@ -149,9 +140,5 @@ async def update_image(id: int, image_id: int, body: ImageUpdate,
 async def delete_image(id: int, image_id: int, current_user: User = Depends(get_current_user),
                        session: Session = Depends(get_session)):
     image = _own_image(id, image_id, current_user, session)
-    path = os.path.join(os.getenv("UPLOADS_DIR", "/app/uploads"), image.filename)
-    session.delete(image)
-    session.commit()
-    if os.path.exists(path):
-        os.remove(path)
+    remove_image(session, image)
     return None

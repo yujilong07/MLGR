@@ -82,3 +82,18 @@ def report_id_fixture(client, auth_headers):
     response = client.post("/reports", headers=auth_headers, json=_REPORT_PAYLOAD)
     return response.json()["id"]
 
+
+
+def make_png(width=40, height=30, color=(200, 30, 30)):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def uploads_tmp(tmp_path, monkeypatch):
+    path = tmp_path / "uploads"
+    monkeypatch.setenv("UPLOADS_DIR", str(path))
+    return path

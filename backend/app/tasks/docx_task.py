@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.models.report import Report, ReportImage
 from app.services.docx_builder import build_report_docx, apply_toc_pages
 from app.services.pdf_builder import build_report_pdf
+from app.services.image_store import ensure_all_local
 
 logger = structlog.get_logger().bind(service="docx_task")
 
@@ -20,7 +21,9 @@ def generate_docx_task(report_id: int):
             if not report:
                 logger.warning("docx_task_report_not_found", report_id=report_id)
                 return None
-            images = session.exec(select(ReportImage).where(ReportImage.report_id == report_id)).all()
+            # Files may be gone from disk after a restart — restore them from the database first
+            images = ensure_all_local(session, session.exec(
+                select(ReportImage).where(ReportImage.report_id == report_id)).all())
             path = build_report_docx(report, images=images)
 
             # PDF for preview/download. Its layout also gives the real TOC page numbers,

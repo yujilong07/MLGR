@@ -1,5 +1,3 @@
-import os
-import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlmodel import Session, select
@@ -7,6 +5,7 @@ from app.database import get_session
 from app.models.report import Report, ReportImage
 from app.models.user import User
 from app.services.auth_service import get_current_user
+from app.services.image_store import save_image
 
 upload_router = APIRouter()
 
@@ -35,22 +34,7 @@ async def upload_image(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'png'
-    filename = f"{uuid.uuid4()}.{ext}"
-    uploads_dir = os.getenv("UPLOADS_DIR", "/app/uploads")
-    os.makedirs(uploads_dir, exist_ok=True)
-    path = os.path.join(uploads_dir, filename)
-    with open(path, "wb") as f:
-        f.write(await file.read())
-
-    image = ReportImage(
-        report_id=report_id,
-        filename=filename,
-        caption=f"Зображення {_human_number(section_path)}",
-        section_path=section_path,
-    )
-    session.add(image)
-    session.commit()
-    session.refresh(image)
-
-    return {"url": f"/uploads/{filename}", "id": image.id}
+    image = save_image(session, report_id, await file.read(), section_path,
+                       caption=f"Зображення {_human_number(section_path)}")
+    return {"url": f"/uploads/{image.filename}", "id": image.id,
+            "caption": image.caption, "section_path": image.section_path, "position": image.position}

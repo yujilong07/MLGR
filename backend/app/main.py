@@ -4,8 +4,9 @@ setup_logging()
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+from sqlmodel import Session, select
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
@@ -15,6 +16,9 @@ from app.routes.reports import reports_router
 from app.routes.generate import generate_router
 from app.routes.upload import upload_router
 from app.limiter import limiter
+from app.database import get_session
+from app.models.report import ReportImage
+from app.services.image_store import ensure_local, local_path
 import structlog
 
 logger = structlog.get_logger().bind(service="app")
@@ -72,7 +76,16 @@ UPLOADS_DIR   = os.getenv("UPLOADS_DIR",   "/tmp/uploads")
 GENERATED_DIR = os.getenv("GENERATED_DIR", "/tmp/generated")
 os.makedirs(UPLOADS_DIR,   exist_ok=True)
 os.makedirs(GENERATED_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+
+@app.get("/uploads/{filename}")
+def serve_upload(filename: str, session: Session = Depends(get_session)):
+    """Image files: from the disk cache, or restored from the database after a restart.
+    Names are random UUIDs, so (as before with the static mount) no auth is needed."""
+    image = session.exec(select(ReportImage).where(ReportImage.filename == filename)).first()
+    if not image or not ensure_local(session, image):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(local_path(image), headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @app.get("/health")
