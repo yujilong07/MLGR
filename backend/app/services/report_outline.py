@@ -35,6 +35,18 @@ class Figure:
     caption: str
 
 
+def signature_rows(report, student_name=""):
+    """Rows of the "Виконав / Прийняв" block on the title page, with verb forms by gender."""
+    student = (getattr(report, "student_name", "") or student_name or "").strip()
+    did = "Виконала:" if getattr(report, "student_gender", "m") == "f" else "Виконав:"
+    took = "Прийняв:" if getattr(report, "teacher_gender", "f") == "m" else "Прийняла:"
+    return [
+        (did, took),
+        (f"ст. гр. {report.group}", report.teacher),
+        (student, ""),
+    ]
+
+
 def text_lines(text):
     """Non-empty lines; each becomes its own paragraph."""
     return [line.strip() for line in (text or "").replace('\r\n', '\n').split('\n') if line.strip()]

@@ -99,7 +99,7 @@ def improve_section_text(text: str) -> str:
 _MAX_CODE_CHARS = 1500
 _MAX_CONTEXT_CHARS = 14000
 
-CONCLUSION_PROMPT_VERSION = "3"
+CONCLUSION_PROMPT_VERSION = "4"
 
 _CONCLUSION_SYSTEM_PROMPT = (
     "Ти досвідчений викладач технічного університету, який пише розділ «Висновки» "
@@ -132,13 +132,16 @@ def _strip_markdown(text):
     return text.replace('`', '').replace('*', '') if text else text
 
 
-def build_report_context(report) -> str:
-    """Readable plain-text view of the whole report for the model (instead of a raw dict dump)."""
-    parts = [
+def _report_header(report) -> str:
+    return "\n".join([
         f"Тема роботи: {report.title}",
         f"Дисципліна: {report.discipline}",
         f"Мета роботи: {report.goal}",
-    ]
+    ])
+
+
+def report_section_blocks(report) -> list[str]:
+    """One plain-text block per top-level section (with its subsections, code and figure captions)."""
     images_by_path = {}
     for img in getattr(report, "images", None) or []:
         images_by_path.setdefault(img.section_path, []).append(img.caption)
@@ -157,37 +160,140 @@ def build_report_context(report) -> str:
             lines.append(f"Рисунок: {caption}")
         return "\n".join(lines)
 
+    blocks = []
     for i, section in enumerate(report.sections or []):
-        parts.append(block(f"{i + 1}", section, str(i)))
+        parts = [block(f"{i + 1}", section, str(i))]
         for j, sub in enumerate(section.get("subsections") or []):
             parts.append(block(f"{i + 1}.{j + 1}", sub, f"{i}.{j}"))
+        blocks.append("\n".join(parts))
+    return blocks
 
-    context = "\n".join(parts)
-    if len(context) > _MAX_CONTEXT_CHARS:
-        context = context[:_MAX_CONTEXT_CHARS] + "\n... (решту роботи скорочено)"
+
+def build_report_context(report, limit: int | None = _MAX_CONTEXT_CHARS) -> str:
+    """Readable plain-text view of the whole report for the model (instead of a raw dict dump)."""
+    context = "\n".join([_report_header(report), *report_section_blocks(report)])
+    if limit and len(context) > limit:
+        context = context[:limit] + "\n... (решту роботи скорочено)"
     return context
+
+
+# ── Long reports: summarise in parts first ───────────────────────────────────
+# One request with the whole of a big report sometimes comes back empty (the model
+# spends its budget reasoning, or the request hits the provider's token limit).
+# Above these limits each part is condensed separately and the conclusion is
+# written from the condensed parts.
+CHUNK_SECTIONS_THRESHOLD = 4
+_MAX_PART_CHARS = 6000
+_MAX_SECTIONS_PER_PART = 3
+
+_PART_SYSTEM_PROMPT = (
+    "Ти допомагаєш викладачу підготувати висновки до студентської роботи. "
+    "Тобі дають тему й мету роботи та ОДНУ її частину (кілька розділів). "
+    "Стисло випиши, що саме зроблено в цій частині: конкретні методи, алгоритми, технології, "
+    "що реалізує код, отримані результати й числа, спостереження. "
+    "Лише факти з тексту — нічого не вигадуй і не оцінюй. "
+    "Обсяг: 60–150 слів, суцільний текст. "
+    + _LANG_RULE
+)
+
+
+def needs_chunking(report) -> bool:
+    sections = report.sections or []
+    return (
+        len(sections) > CHUNK_SECTIONS_THRESHOLD
+        or len(build_report_context(report, limit=None)) > _MAX_CONTEXT_CHARS
+    )
+
+
+def split_report_parts(report) -> list[str]:
+    """Groups consecutive sections into parts of at most _MAX_SECTIONS_PER_PART
+    sections / _MAX_PART_CHARS characters (a single huge section is cut)."""
+    parts, current, size = [], [], 0
+    for block in report_section_blocks(report):
+        if len(block) > _MAX_PART_CHARS:
+            block = block[:_MAX_PART_CHARS] + "\n... (розділ скорочено)"
+        if current and (len(current) >= _MAX_SECTIONS_PER_PART or size + len(block) > _MAX_PART_CHARS):
+            parts.append("\n".join(current))
+            current, size = [], 0
+        current.append(block)
+        size += len(block)
+    if current:
+        parts.append("\n".join(current))
+    return parts
+
+
+def summarize_part(report, part_text: str, index: int, total: int) -> str:
+    t0 = time.perf_counter()
+    logger.info("ai_request_start", fn="summarize_part", part=index, total=total, model=_MODEL)
+    try:
+        response = client.with_options(max_retries=4).chat.completions.create(
+            model=_MODEL,
+            temperature=0.2,
+            reasoning_effort="low",
+            messages=[
+                {"role": "system", "content": _PART_SYSTEM_PROMPT},
+                {"role": "user", "content": f"{_report_header(report)}\n\nЧастина {index} з {total}:\n{part_text}"},
+            ],
+        )
+        logger.info(
+            "ai_request_done",
+            fn="summarize_part",
+            part=index,
+            elapsed_ms=round((time.perf_counter() - t0) * 1000),
+            total_tokens=response.usage.total_tokens if response.usage else None,
+        )
+        return _strip_markdown((response.choices[0].message.content or "").strip())
+    except Exception:
+        logger.error("ai_request_failed", fn="summarize_part", part=index, exc_info=True)
+        raise
+
+
+def condensed_report_context(report, summaries: list[str]) -> str:
+    """What the conclusion model sees for a long report: header + section titles + part summaries."""
+    titles = [
+        f"{i + 1} {(s.get('title') or '').strip() or '(без назви)'}"
+        for i, s in enumerate(report.sections or [])
+    ]
+    body = "\n\n".join(f"Частина {i + 1}. Що зроблено:\n{text}" for i, text in enumerate(summaries))
+    return (
+        f"{_report_header(report)}\n\nРозділи роботи:\n" + "\n".join(titles)
+        + "\n\nРобота велика, тому нижче — стислий виклад її частин по порядку.\n\n" + body
+    )
+
+
+def _conclusion_stream(report_context: str, effort: str):
+    response = client.chat.completions.create(
+        model=_MODEL,
+        temperature=0.2,
+        reasoning_effort=effort,
+        messages=[
+            {"role": "system", "content": _CONCLUSION_SYSTEM_PROMPT},
+            {"role": "user", "content": report_context},
+        ],
+        stream=True,
+    )
+    for chunk in response:
+        if not chunk.choices:
+            continue
+        text = _strip_markdown(chunk.choices[0].delta.content)
+        if text:
+            yield text
 
 
 def stream_conclusion(report_context: str):
     t0 = time.perf_counter()
     logger.info("ai_stream_start", fn="stream_conclusion", model=_MODEL)
+    produced = False
     try:
-        response = client.chat.completions.create(
-            model=_MODEL,
-            temperature=0.2,
-            reasoning_effort="high",
-            messages=[
-                {"role": "system", "content": _CONCLUSION_SYSTEM_PROMPT},
-                {"role": "user", "content": report_context},
-            ],
-            stream=True,
-        )
-        for chunk in response:
-            if not chunk.choices:
-                continue
-            text = _strip_markdown(chunk.choices[0].delta.content)
-            if text:
+        # With "high" reasoning a long input sometimes ends with no text at all;
+        # in that case ask again with less reasoning instead of returning nothing
+        for effort in ("high", "medium"):
+            for text in _conclusion_stream(report_context, effort):
+                produced = True
                 yield text
+            if produced:
+                break
+            logger.warning("ai_stream_empty", fn="stream_conclusion", effort=effort)
     except Exception:
         logger.error(
             "ai_stream_failed",
@@ -200,5 +306,6 @@ def stream_conclusion(report_context: str):
         logger.info(
             "ai_stream_done",
             fn="stream_conclusion",
+            produced=produced,
             elapsed_ms=round((time.perf_counter() - t0) * 1000),
         )

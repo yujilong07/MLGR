@@ -10,6 +10,10 @@ class Report(SQLModel,table = True):
     title :str
     discipline: str
     teacher : str
+    # "m" / "f": picks Виконав/Виконала and Прийняв/Прийняла on the title page
+    teacher_gender: str = Field(default="f", max_length=1)
+    student_name: str = Field(default="")
+    student_gender: str = Field(default="m", max_length=1)
     group: str
     goal: str
     sections: Optional[Any] = Field(default=None, sa_column=Column(JSON))

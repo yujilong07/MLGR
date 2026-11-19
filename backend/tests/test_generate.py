@@ -208,3 +208,51 @@ def test_download_pdf_missing(client, auth_headers, report_id, tmp_path, monkeyp
 def test_download_unknown_format(client, auth_headers, report_id):
     response = client.get(f"/reports/{report_id}/download?format=exe", headers=auth_headers)
     assert response.status_code == 422
+
+
+# ── long reports: conclusion is written from per-part summaries ──────────────
+
+def _many_sections(n):
+    return [{"title": f"Розділ {i}", "text": f"Зроблено крок {i}."} for i in range(n)]
+
+
+def test_needs_chunking_and_split():
+    from types import SimpleNamespace
+    from app.services.ai_service import needs_chunking, split_report_parts
+    small = SimpleNamespace(title="T", discipline="D", goal="G", sections=_many_sections(4))
+    big = SimpleNamespace(title="T", discipline="D", goal="G", sections=_many_sections(7))
+    assert not needs_chunking(small)
+    assert needs_chunking(big)
+    parts = split_report_parts(big)
+    assert len(parts) == 3                      # 3 + 3 + 1 sections
+    assert "Розділ 6" in parts[-1]
+
+
+def test_stream_conclusion_long_report_uses_parts(client, auth_token, auth_headers, report_id):
+    client.patch(f"/reports/{report_id}", headers=auth_headers, json={"sections": _many_sections(7)})
+    with patch("app.routes.generate.summarize_part", side_effect=lambda r, part, n, total: f"підсумок {n}") as summ, \
+         patch("app.routes.generate.stream_conclusion", return_value=iter(["Висновок"])) as final:
+        response = client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
+    assert summ.call_count == 3
+    context = final.call_args.args[0]
+    assert "підсумок 1" in context and "підсумок 3" in context
+    assert "Аналізуємо частину 1 з 3" in response.text
+    assert client.get(f"/reports/{report_id}", headers=auth_headers).json()["conclusion"] == "Висновок"
+
+
+def test_stream_conclusion_empty_answer_is_error(client, auth_token, auth_headers, report_id):
+    client.patch(f"/reports/{report_id}", headers=auth_headers, json={"conclusion": "старий"})
+    with patch("app.routes.generate.stream_conclusion", return_value=iter([])):
+        response = client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
+    assert '"error"' in response.text
+    assert client.get(f"/reports/{report_id}", headers=auth_headers).json()["conclusion"] == "старий"
+
+
+def test_stream_conclusion_model_failure_is_error(client, auth_token, report_id):
+    def boom(_):
+        raise RuntimeError("413")
+        yield
+    with patch("app.routes.generate.stream_conclusion", side_effect=boom):
+        response = client.get(f"/reports/{report_id}/stream-conclusion?token={auth_token}")
+    assert response.status_code == 200
+    assert '"error"' in response.text

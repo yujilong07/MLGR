@@ -9,7 +9,7 @@ from datetime import datetime
 import math
 import os
 
-from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, text_lines
+from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, signature_rows, text_lines
 
 # A4, margins 30/20/20/20 mm (ДСТУ 3008:2015)
 TEXT_WIDTH = Mm(160)
@@ -238,11 +238,7 @@ def add_title_page(document, report, student_name=""):
     table = document.add_table(rows=3, cols=2)
     _remove_table_borders(table)
 
-    rows_data = [
-        ("Виконав:", "Прийняла:"),
-        (f"ст. гр. {report.group}", report.teacher),
-        (student_name, ""),
-    ]
+    rows_data = signature_rows(report, student_name)
     for row_idx, (left, right) in enumerate(rows_data):
         for col_idx, text in enumerate((left, right)):
             cell = table.cell(row_idx, col_idx)

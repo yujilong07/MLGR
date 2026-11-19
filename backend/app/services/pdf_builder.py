@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from app.services.docx_builder import IMAGE_WIDTH, image_size
-from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, text_lines
+from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, signature_rows, text_lines
 
 EMU_PER_MM = 36000
 
@@ -82,7 +82,7 @@ def _paragraphs(text, cls=None):
 def _title_page(report, student_name):
     blank = '<p>&nbsp;</p>'
     line = lambda text: f'<p>{escape(text or "")}</p>' if text else blank
-    rows = [("Виконав:", "Прийняла:"), (f"ст. гр. {report.group}", report.teacher), (student_name, "")]
+    rows = signature_rows(report, student_name)
     table = ''.join(f'<tr><td>{line(a)}</td><td>{line(b)}</td></tr>' for a, b in rows)
     return (
         '<section class="title">'

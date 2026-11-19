@@ -2,6 +2,7 @@ import asyncio
 import os
 import hashlib
 import json
+import structlog
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
@@ -18,6 +19,7 @@ from app.services.auth_service import get_current_user, authenticate_token
 from app.services.ai_service import (
     stream_conclusion, generate_introduction, improve_section_text,
     build_report_context, CONCLUSION_PROMPT_VERSION, _MODEL,
+    needs_chunking, split_report_parts, summarize_part, condensed_report_context,
 )
 from app.services.cache_service import get_cached, set_cached
 from app.tasks.docx_task import generate_docx_task
@@ -30,6 +32,7 @@ class SectionTextRequest(BaseModel):
 
 
 generate_router = APIRouter()
+logger = structlog.get_logger().bind(service="generate")
 
 
 @generate_router.get('/reports/{id}/stream-conclusion')
@@ -46,13 +49,14 @@ async def stream_conclusion_endpoint(
         raise HTTPException(status_code=404, detail="Not found")
 
     images = session.exec(select(ReportImage).where(ReportImage.report_id == id)).all()
-    report_context = build_report_context(SimpleNamespace(
+    snapshot = SimpleNamespace(
         title=report.title, discipline=report.discipline, goal=report.goal,
         sections=report.sections, images=images,
-    ))
+    )
+    full_context = build_report_context(snapshot, limit=None)
     # Any change to the report, the prompt or the model gives a new conclusion
     cache_key = "conclusion:" + hashlib.md5(
-        f"{CONCLUSION_PROMPT_VERSION}|{_MODEL}|{report_context}".encode()
+        f"{CONCLUSION_PROMPT_VERSION}|{_MODEL}|{full_context}".encode()
     ).hexdigest()
 
     def save_conclusion(text: str):
@@ -64,24 +68,49 @@ async def stream_conclusion_endpoint(
             session.add(fresh)
             session.commit()
 
+    def event(**payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
     async def event_stream():
         cached = get_cached(cache_key)
         if cached:
             save_conclusion(cached)
-            yield f'data: {json.dumps({"token": cached})}\n\n'
-            yield f'data: {json.dumps({"done": True})}\n\n'
+            yield event(token=cached)
+            yield event(done=True)
             return
 
-        full_text = ""
         loop = asyncio.get_running_loop()
-        tokens = stream_conclusion(report_context)
-        # Pull tokens one by one in a thread so they reach the browser as they arrive
-        while (chunk := await loop.run_in_executor(None, next, tokens, None)) is not None:
-            full_text += chunk
-            yield f'data: {json.dumps({"token": chunk})}\n\n'
+        full_text = ""
+        try:
+            if needs_chunking(snapshot):
+                # Big report: condense each part first, then write the conclusion from the parts
+                parts = split_report_parts(snapshot)
+                summaries = []
+                for n, part in enumerate(parts, start=1):
+                    yield event(status=f"Аналізуємо частину {n} з {len(parts)}…")
+                    summaries.append(await loop.run_in_executor(
+                        None, summarize_part, snapshot, part, n, len(parts)))
+                yield event(status="Пишемо висновки…")
+                report_context = condensed_report_context(snapshot, summaries)
+            else:
+                report_context = build_report_context(snapshot)
+
+            tokens = stream_conclusion(report_context)
+            # Pull tokens one by one in a thread so they reach the browser as they arrive
+            while (chunk := await loop.run_in_executor(None, next, tokens, None)) is not None:
+                full_text += chunk
+                yield event(token=chunk)
+        except Exception:
+            logger.error("conclusion_failed", report_id=id, exc_info=True)
+            yield event(error="Модель не відповіла. Спробуйте ще раз за хвилину.")
+            return
+
+        if not full_text.strip():
+            yield event(error="Модель повернула порожню відповідь. Спробуйте ще раз.")
+            return
 
         save_conclusion(full_text)
-        yield f'data: {json.dumps({"done": True})}\n\n'
+        yield event(done=True)
         set_cached(cache_key, full_text, ttl=86400)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
