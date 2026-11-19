@@ -85,6 +85,9 @@ const ICONS = {
   minus:    '<svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
   x:        '<svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   up:       '<svg class="icon" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg>',
+  left:     '<svg class="icon" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>',
+  right:    '<svg class="icon" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
+  expand:   '<svg class="icon" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
   down:     '<svg class="icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
   undo:     '<svg class="icon" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>',
   redo:     '<svg class="icon" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>',
@@ -92,6 +95,10 @@ const ICONS = {
   edit:     '<svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   eye:      '<svg class="icon" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
+const sortImages = list => [...list].sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.id - b.id);
+const imagesIn = (images, path) => sortImages(images.filter(im => im.section_path === path));
+// document order: by section ("0" < "0.1" < "1"), then by position inside a section
+const docOrder = images => sortImages(images).sort((a, b) => a.section_path.localeCompare(b.section_path, undefined, { numeric: true }));
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function setLoading(btn, on) {
@@ -404,6 +411,22 @@ async function initEditor() {
   ['f-title', 'f-discipline', 'f-group', 'f-student', 'f-teacher', 'f-goal', 'ai-output'].forEach(id =>
     document.getElementById(id)?.addEventListener('input', updateReadiness));
 
+  const secs = document.getElementById('sections-container');
+  secs?.addEventListener('click', onImageCardEvent);
+  secs?.addEventListener('input', onImageCardEvent);
+
+  // Text fields grow with their content instead of scrolling inside a small box
+  document.addEventListener('input', e => {
+    if (e.target.matches('textarea')) autoGrow(e.target);
+    refreshLive();
+  });
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('.main textarea').forEach(autoGrow);
+    refreshLive();
+  });
+  document.addEventListener('focusin', e => followFocus(e.target));
+  document.getElementById('btn-live-open')?.addEventListener('click', previewReport);
+
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !document.querySelector('.pv')) {
       e.preventDefault();
@@ -423,8 +446,69 @@ async function initEditor() {
   }
 }
 
+function autoGrow(el) {
+  if (!el.offsetParent) return;           // hidden: nothing to measure
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight + 2}px`;
+}
+
+/* ── live preview (wide screens): the document as it will look, following the focused field ── */
+let liveTimer = null, liveFocus = null;
+
+function currentDoc() {
+  const v = id => document.getElementById(id)?.value ?? '';
+  return {
+    title: v('f-title'), discipline: v('f-discipline'), group: v('f-group'),
+    teacher: v('f-teacher'), teacher_gender: genders.teacher,
+    student_name: v('f-student'), student_gender: genders.student,
+    goal: v('f-goal'), conclusion: v('ai-output'), sections,
+  };
+}
+
+function refreshLive() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    const box = document.getElementById('live-pages');
+    if (!box || !box.offsetParent) return;
+    box.innerHTML = buildDocSheets(currentDoc(), reportImages);
+    markEmptyFields(box);
+    const stage = box.parentElement;
+    box.style.zoom = Math.min(1, (stage.clientWidth - 24) / SHEET_PX);
+    if (liveFocus) scrollLiveTo(liveFocus, false);
+  }, 200);
+}
+
+const LIVE_TARGETS = {
+  'f-title': '.dv-title', 'f-discipline': '.dv-title', 'f-group': '.dv-title',
+  'f-student': '.dv-title', 'f-teacher': '.dv-title',
+  'f-goal': '.dv-body', 'ai-output': '[data-bind="doc|conclusion"]',
+};
+
+function followFocus(el) {
+  if (!el?.closest) return;
+  const sec = el.closest('.section-item');
+  const target = sec ? `#dv-${sec.id.replace(/^sec-/, '')}` : LIVE_TARGETS[el.id];
+  if (!target) return;
+  liveFocus = target;
+  scrollLiveTo(target, true);
+}
+
+function scrollLiveTo(selector, smooth) {
+  const box = document.getElementById('live-pages');
+  if (!box?.offsetParent) return;
+  box.querySelectorAll('.live-active').forEach(n => n.classList.remove('live-active'));
+  const node = box.querySelector(selector);
+  if (!node) return;
+  if (selector.startsWith('#dv-') || selector.startsWith('[data-bind')) node.classList.add('live-active');
+  const stage = box.parentElement;
+  const zoom = Number(box.style.zoom) || 1;
+  const top = (node.getBoundingClientRect().top - stage.getBoundingClientRect().top) + stage.scrollTop;
+  stage.scrollTo({ top: Math.max(0, top - 40 * zoom), behavior: smooth ? 'smooth' : 'auto' });
+}
+
 function setGender(who, g) {
   genders[who] = g;
+  refreshLive();
   document.querySelectorAll(`.seg[data-gender="${who}"] [data-g]`).forEach(b => {
     const on = b.dataset.g === g;
     b.classList.toggle('on', on);
@@ -453,6 +537,8 @@ async function loadReport(id) {
 
     document.getElementById('ai-output').value = r.conclusion || '';
     updateReadiness();
+    document.querySelectorAll('.main textarea').forEach(autoGrow);
+    refreshLive();
   } catch (ex) { toast('Помилка завантаження: ' + ex.message, 'err'); }
 }
 
@@ -500,6 +586,61 @@ async function remapImages(id, images, mapPath) {
     kept.push({ ...img, section_path: next ?? img.section_path });
   }
   return kept;
+}
+
+// Swaps a figure with its neighbour inside its section; positions are renumbered 0..n
+async function moveImage(id, images, imgId, dir) {
+  const img = images.find(i => i.id === imgId);
+  if (!img) return images;
+  const list = imagesIn(images, img.section_path);
+  const k = list.findIndex(i => i.id === imgId);
+  const to = k + dir;
+  if (to < 0 || to >= list.length) return images;
+  [list[k], list[to]] = [list[to], list[k]];
+  const updates = list.map((im, pos) => ({ im, pos })).filter(({ im, pos }) => im.position !== pos);
+  try {
+    await Promise.all(updates.map(({ im, pos }) => req('PATCH', `/reports/${id}/images/${im.id}`, { position: pos })));
+  } catch (ex) { toast('Не вдалося змінити порядок: ' + ex.message, 'err'); return images; }
+  const pos = new Map(list.map((im, p) => [im.id, p]));
+  return images.map(im => pos.has(im.id) ? { ...im, position: pos.get(im.id) } : im);
+}
+
+/* full-screen image viewer: ←/→ between images, Esc to close */
+function openLightbox(list, startId) {
+  list = list.filter(i => i.available !== false);
+  let k = Math.max(0, list.findIndex(i => i.id === startId));
+  if (!list.length) return;
+  const box = document.createElement('div');
+  box.className = 'lb';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.innerHTML = `
+    <button class="lb-btn lb-close" title="Закрити (Esc)">${ICONS.x}</button>
+    <button class="lb-btn lb-prev" title="Попереднє (←)">${ICONS.left}</button>
+    <figure class="lb-fig"><img alt=""><figcaption></figcaption></figure>
+    <button class="lb-btn lb-next" title="Наступне (→)">${ICONS.right}</button>`;
+  const show = () => {
+    const img = list[k];
+    box.querySelector('img').src = `${API_URL}${img.url}`;
+    box.querySelector('figcaption').textContent = `${k + 1} / ${list.length} · ${img.caption || ''}`;
+    box.querySelector('.lb-prev').disabled = k === 0;
+    box.querySelector('.lb-next').disabled = k === list.length - 1;
+  };
+  const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
+  const go = d => { k = Math.min(list.length - 1, Math.max(0, k + d)); show(); };
+  const onKey = e => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    if (e.key === 'ArrowLeft') go(-1);
+    if (e.key === 'ArrowRight') go(1);
+  };
+  box.onclick = e => {
+    if (e.target.closest('.lb-prev')) go(-1);
+    else if (e.target.closest('.lb-next')) go(1);
+    else if (e.target.closest('.lb-close') || e.target === box) close();
+  };
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(box);
+  show();
 }
 
 const hasContent = b => Boolean(b.title?.trim() || b.text?.trim() || b.code?.trim() || b.subsections?.length);
@@ -586,7 +727,7 @@ function blockFieldsHtml(path, block, kind) {
           </div>
         </div>
         <div class="form-group">
-          <label>Скріншоти <span class="text-muted">— якщо є</span></label>
+          <label>Рисунки <span class="text-muted">— у документі йдуть у цьому порядку; клік по зображенню — перегляд</span></label>
           <div class="upload-zone" onclick="triggerUpload('${path}')"
                ondragover="event.preventDefault(); this.classList.add('drag')"
                ondragleave="this.classList.remove('drag')"
@@ -631,10 +772,12 @@ function renderSections() {
         <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">${ICONS.plus} Підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
       </div>
     </div>`).join('');
-    reportImages.forEach(img => appendThumb(img.section_path, img.url, img.id));
+    new Set(reportImages.map(i => i.section_path)).forEach(renderImageGrid);
+    container.querySelectorAll('textarea').forEach(autoGrow);
   }
   renderOutline();
   updateReadiness();
+  refreshLive();
 }
 
 /* ── right panel: outline + readiness ── */
@@ -730,40 +873,81 @@ async function uploadImages(id, files, sectionPath) {
         headers: { Authorization: `Bearer ${auth.token()}` },
         body: fd,
       });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
-      created.push({ id: data.id, url: data.url, section_path: String(sectionPath),
-                     caption: `Зображення ${String(sectionPath).split('.').map(n => Number(n) + 1).join('.')}` });
-    } catch (ex) { toast('Помилка завантаження: ' + ex.message, 'err'); }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Upload failed');
+      created.push({ available: true, ...(await res.json()) });
+    } catch (ex) { toast(`${file.name}: ${ex.message}`, 'err'); }
   }
   return created;
 }
 
 async function uploadFiles(files, sectionPath) {
   if (!reportId) { toast('Спершу збережіть звіт — тоді можна додавати скріншоти', 'err'); return; }
+  const zone = document.querySelector(`#imgs-${String(sectionPath).replace('.', '-')}`)?.previousElementSibling?.previousElementSibling;
+  zone?.classList.add('busy');
   const created = await uploadImages(reportId, files, sectionPath);
+  zone?.classList.remove('busy');
   reportImages.push(...created);
-  created.forEach(img => appendThumb(img.section_path, img.url, img.id));
+  renderImageGrid(String(sectionPath));
+  if (created.length) refreshLive();
 }
 
-function appendThumb(path, url, imgId) {
+// Figures of one section as cards: preview, caption, order, delete
+function renderImageGrid(path) {
   const grid = document.getElementById(`imgs-${String(path).replace('.', '-')}`);
   if (!grid) return;
-  const div = document.createElement('div');
-  div.className = 'img-thumb';
-  div.dataset.imgId = imgId;
-  div.innerHTML = `<img src="${API_URL}${url}" alt="скріншот"><button class="rm" title="Видалити" onclick="removeThumb(this)">✕</button>`;
-  grid.appendChild(div);
+  const list = imagesIn(reportImages, path);
+  grid.innerHTML = list.map((img, k) => `
+    <div class="img-card ${img.available === false ? 'lost' : ''}" data-img-id="${img.id}">
+      ${img.available === false
+        ? `<div class="img-lost">Файл втрачено на сервері.<br>Видаліть і завантажте ще раз.</div>`
+        : `<button class="img-view" data-imgact="view" title="Переглянути"><img src="${API_URL}${img.url}" alt="" loading="lazy"><span class="img-zoom">${ICONS.expand}</span></button>`}
+      <div class="img-meta">
+        <span class="img-order">${k + 1}</span>
+        <input class="img-cap" value="${esc(img.caption)}" placeholder="Підпис рисунка" data-imgact="caption">
+      </div>
+      <div class="img-tools">
+        <button class="pv-icon-btn" data-imgact="left" title="Раніше" ${k === 0 ? 'disabled' : ''}>${ICONS.left}</button>
+        <button class="pv-icon-btn" data-imgact="right" title="Пізніше" ${k === list.length - 1 ? 'disabled' : ''}>${ICONS.right}</button>
+        <span class="img-tools-gap"></span>
+        <button class="pv-icon-btn danger" data-imgact="delete" title="Видалити">${ICONS.trash}</button>
+      </div>
+    </div>`).join('');
 }
 
-async function removeThumb(btn) {
-  const thumb = btn.closest('.img-thumb');
-  const imgId = Number(thumb.dataset.imgId);
-  try {
-    await req('DELETE', `/reports/${reportId}/images/${imgId}`);
-    reportImages = reportImages.filter(i => i.id !== imgId);
-    thumb.remove();
-  } catch (ex) { toast('Не вдалося видалити: ' + ex.message, 'err'); }
+const captionTimers = {};
+function onImageCardEvent(e) {
+  const el = e.target.closest('[data-imgact]');
+  const card = e.target.closest('.img-card');
+  if (!el || !card) return;
+  const imgId = Number(card.dataset.imgId);
+  const img = reportImages.find(i => i.id === imgId);
+  const act = el.dataset.imgact;
+  if (e.type === 'input' && act === 'caption') {
+    img.caption = el.value;
+    clearTimeout(captionTimers[imgId]);
+    captionTimers[imgId] = setTimeout(() =>
+      req('PATCH', `/reports/${reportId}/images/${imgId}`, { caption: img.caption })
+        .catch(ex => toast('Підпис не збережено: ' + ex.message, 'err')), 700);
+    refreshLive();
+    return;
+  }
+  if (e.type !== 'click') return;
+  if (act === 'view') openLightbox(docOrder(reportImages), imgId);
+  if (act === 'left' || act === 'right') {
+    moveImage(reportId, reportImages, imgId, act === 'left' ? -1 : 1).then(list => {
+      reportImages = list;
+      renderImageGrid(img.section_path);
+      refreshLive();
+    });
+  }
+  if (act === 'delete') {
+    if (!confirm('Видалити це зображення зі звіту?')) return;
+    req('DELETE', `/reports/${reportId}/images/${imgId}`).then(() => {
+      reportImages = reportImages.filter(i => i.id !== imgId);
+      renderImageGrid(img.section_path);
+      refreshLive();
+    }).catch(ex => toast('Не вдалося видалити: ' + ex.message, 'err'));
+  }
 }
 
 /* ── save ── */
@@ -830,6 +1014,7 @@ async function streamConclusion() {
   const fail = msg => {
     finish();
     if (!text) out.value = previous;
+    autoGrow(out);
     toast(msg || 'Не вдалося отримати висновки, спробуйте ще раз', 'err');
   };
 
@@ -843,7 +1028,7 @@ async function streamConclusion() {
       if (!text) setStatus('');
       text += data.token;
       out.value = text;
-      out.scrollTop = out.scrollHeight;
+      autoGrow(out);
     }
     if (data.error) fail(data.error);
     if (data.done) {
@@ -968,6 +1153,114 @@ const paras = text => {
 };
 // What the backend stores: one line per paragraph, no empty lines
 const readParas = el => el.innerText.split('\n').map(l => l.trim()).filter(Boolean).join('\n');
+
+/* ═══════════════════════════════════════════════════════
+   DOCUMENT  (HTML copy of the .docx — used by the editable
+   document and by the live preview in the editor)
+═══════════════════════════════════════════════════════ */
+
+function buildDocSheets(doc, images, { editable = false } = {}) {
+  const editAttr = (bind, ph, kind = 'line') => editable
+    ? `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}" contenteditable="${kind === 'paras' ? 'true' : PLAIN_EDIT}" spellcheck="true"`
+    : `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}"`;
+  const blockBind = (field, i, j) => j === undefined ? `${field}|${i}` : `${field}|${i}|${j}`;
+    const did = doc.student_gender === 'f' ? 'Виконала:' : 'Виконав:';
+    const took = doc.teacher_gender === 'm' ? 'Прийняв:' : 'Прийняла:';
+    const gBtn = (who, label) => editable
+      ? `<button class="dv-gender" data-gender="${who}" title="Натисніть, щоб змінити форму">${label}</button>`
+      : label;
+
+    const titlePage = `
+      <section class="dv-sheet dv-title">
+        <p>Міністерство освіти і науки України</p>
+        <p>Харківський національний університет радіоелектроніки</p>
+        <p>&nbsp;</p>
+        <p>Кафедра штучного інтелекту</p>
+        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
+        <p>Дисципліна «<span ${editAttr('doc|discipline', 'Назва дисципліни')}>${esc(doc.discipline)}</span>»</p>
+        <p><span ${editAttr('doc|title', 'Назва роботи')}>${esc(doc.title)}</span></p>
+        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
+        <div class="dv-sign">
+          <div>
+            <p>${gBtn('student', did)}</p>
+            <p>ст. гр. <span ${editAttr('doc|group', 'група')}>${esc(doc.group)}</span></p>
+            <p><span ${editAttr('doc|student_name', 'Прізвище І. Б. студента')}>${esc(doc.student_name)}</span></p>
+          </div>
+          <div>
+            <p>${gBtn('teacher', took)}</p>
+            <p><span ${editAttr('doc|teacher', 'Прізвище І. Б. викладача')}>${esc(doc.teacher)}</span></p>
+          </div>
+        </div>
+        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
+        <p>Харків – ${new Date().getFullYear()}</p>
+      </section>`;
+
+    let listing = 0, figure = 0;
+    const blockHtml = (b, i, j) => {
+      const path = j === undefined ? `${i}` : `${i}.${j}`;
+      const num = j === undefined ? `${i + 1}` : `${i + 1}.${j + 1}`;
+      const title = b.title.trim() || (j === undefined ? `Розділ ${num}` : `Підрозділ ${num}`);
+      const tag = j === undefined ? 'h1' : 'h2';
+      let html = `
+        <div class="dv-block" id="dv-${path.replace('.', '-')}" data-path="${path}">
+          ${editable ? `<div class="dv-hover">
+            ${j === undefined ? `<button data-act="sub" data-path="${path}" title="Додати підрозділ">${ICONS.plus} Підрозділ</button>` : ''}
+            ${b.code ? '' : `<button data-act="code" data-path="${path}" title="Додати лістинг коду">${ICONS.code} Код</button>`}
+            <button data-act="img" data-path="${path}" title="Додати рисунок">${ICONS.image} Рисунок</button>
+            <button data-act="del" data-path="${path}" class="danger" title="Видалити">${ICONS.trash}</button>
+          </div>` : ''}
+          <${tag} class="dv-h"><span class="dv-num">${num}</span> <span ${editAttr(blockBind('title', i, j), j === undefined ? 'Назва розділу' : 'Назва підрозділу')}>${esc(b.title)}</span></${tag}>
+          <div class="dv-text" ${editAttr(blockBind('text', i, j), 'Текст — що зроблено, які результати', 'paras')}>${paras(b.text)}</div>`;
+      if (b.code) {
+        listing++;
+        html += `<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${listing} – ${esc(title)}</p>
+          <pre class="dv-code" ${editAttr(blockBind('code', i, j), 'Код', 'code')}>${esc(b.code.replace(/\r/g, ''))}</pre>`;
+      }
+      const figs = imagesIn(images, path);
+      figs.forEach((img, k) => {
+        figure++;
+        html += `<figure class="dv-fig" data-img="${img.id}">
+            ${img.available === false
+              ? `<div class="dv-fig-lost">Файл рисунка втрачено на сервері — видаліть його і завантажте ще раз</div>`
+              : `<img src="${API_URL}${img.url}" alt="" ${editable ? `data-act="viewimg" data-img="${img.id}" title="Переглянути"` : ''}>`}
+            <figcaption>Рисунок ${figure} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
+            ${editable ? `<div class="dv-fig-tools">
+              <button data-act="imgup" data-img="${img.id}" title="Раніше" ${k === 0 ? 'disabled' : ''}>${ICONS.up}</button>
+              <button data-act="imgdown" data-img="${img.id}" title="Пізніше" ${k === figs.length - 1 ? 'disabled' : ''}>${ICONS.down}</button>
+              <button data-act="delimg" data-img="${img.id}" title="Видалити рисунок">${ICONS.trash}</button>
+            </div>` : ''}
+          </figure>`;
+      });
+      return html + '</div>';
+    };
+
+    const toc = [['МЕТА РОБОТИ', 1]];
+    doc.sections.forEach((s, i) => {
+      toc.push([`${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`, 1, `${i}`]);
+      s.subsections.forEach((b, j) => toc.push([`${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`, 2, `${i}.${j}`]));
+    });
+    toc.push(['ВИСНОВКИ', 1]);
+
+    return titlePage + `
+      <section class="dv-sheet dv-toc">
+        <p class="dv-toc-title">ЗМІСТ</p>
+        ${toc.map(([t, l]) => `<p class="dv-toc-row l${l}"><span>${esc(t)}</span><i></i></p>`).join('')}
+        <p class="dv-note">Зміст складається автоматично; номери сторінок з'являться в документі (вкладка PDF).</p>
+      </section>
+      <section class="dv-sheet dv-body">
+        <h1 class="dv-h">Мета роботи</h1>
+        <div class="dv-text" ${editAttr('doc|goal', 'Мета роботи', 'paras')}>${paras(doc.goal)}</div>
+        ${doc.sections.map((s, i) => blockHtml(s, i) + s.subsections.map((b, j) => blockHtml(b, i, j)).join('')).join('')}
+        ${editable ? `<button class="dv-add" data-act="section">${ICONS.plus} Додати розділ ${doc.sections.length + 1}</button>` : '<div class="dv-add-gap"></div>'}
+        <h1 class="dv-h">Висновки</h1>
+        <div class="dv-text" ${editAttr('doc|conclusion', 'Висновки (можна згенерувати в редакторі)', 'paras')}>${paras(doc.conclusion)}</div>
+      </section>`;
+
+}
+
+function markEmptyFields(container) {
+  container.querySelectorAll('[data-bind]').forEach(el => el.classList.toggle('is-empty', !el.textContent.trim()));
+}
 
 /**
  * Opens the document window. Default tab — the document itself, editable in place
@@ -1180,8 +1473,6 @@ async function openPreview(id, title, opts = {}) {
 
   /* ═════════ editable document ═════════ */
   const pages = $('.dv-pages');
-  const editAttr = (bind, ph, kind = 'line') =>
-    `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}" contenteditable="${kind === 'paras' ? 'true' : PLAIN_EDIT}" spellcheck="true"`;
   const getField = bind => {
     const [k, a, b] = bind.split('|');
     if (k === 'doc') return doc[a];
@@ -1201,90 +1492,7 @@ async function openPreview(id, title, opts = {}) {
 
   function render() {
     const scrollTop = $('.pv-stage[data-mode="edit"]').scrollTop;
-    const did = doc.student_gender === 'f' ? 'Виконала:' : 'Виконав:';
-    const took = doc.teacher_gender === 'm' ? 'Прийняв:' : 'Прийняла:';
-    const gBtn = (who, label) =>
-      `<button class="dv-gender" data-gender="${who}" title="Натисніть, щоб змінити форму">${label}</button>`;
-
-    const titlePage = `
-      <section class="dv-sheet dv-title">
-        <p>Міністерство освіти і науки України</p>
-        <p>Харківський національний університет радіоелектроніки</p>
-        <p>&nbsp;</p>
-        <p>Кафедра штучного інтелекту</p>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p>Дисципліна «<span ${editAttr('doc|discipline', 'Назва дисципліни')}>${esc(doc.discipline)}</span>»</p>
-        <p><span ${editAttr('doc|title', 'Назва роботи')}>${esc(doc.title)}</span></p>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <div class="dv-sign">
-          <div>
-            <p>${gBtn('student', did)}</p>
-            <p>ст. гр. <span ${editAttr('doc|group', 'група')}>${esc(doc.group)}</span></p>
-            <p><span ${editAttr('doc|student_name', 'Прізвище І. Б. студента')}>${esc(doc.student_name)}</span></p>
-          </div>
-          <div>
-            <p>${gBtn('teacher', took)}</p>
-            <p><span ${editAttr('doc|teacher', 'Прізвище І. Б. викладача')}>${esc(doc.teacher)}</span></p>
-          </div>
-        </div>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p>Харків – ${new Date().getFullYear()}</p>
-      </section>`;
-
-    let listing = 0, figure = 0;
-    const blockHtml = (b, i, j) => {
-      const path = j === undefined ? `${i}` : `${i}.${j}`;
-      const num = j === undefined ? `${i + 1}` : `${i + 1}.${j + 1}`;
-      const title = b.title.trim() || (j === undefined ? `Розділ ${num}` : `Підрозділ ${num}`);
-      const tag = j === undefined ? 'h1' : 'h2';
-      let html = `
-        <div class="dv-block" id="dv-${path.replace('.', '-')}" data-path="${path}">
-          <div class="dv-hover">
-            ${j === undefined ? `<button data-act="sub" data-path="${path}" title="Додати підрозділ">${ICONS.plus} Підрозділ</button>` : ''}
-            ${b.code ? '' : `<button data-act="code" data-path="${path}" title="Додати лістинг коду">${ICONS.code} Код</button>`}
-            <button data-act="img" data-path="${path}" title="Додати рисунок">${ICONS.image} Рисунок</button>
-            <button data-act="del" data-path="${path}" class="danger" title="Видалити">${ICONS.trash}</button>
-          </div>
-          <${tag} class="dv-h"><span class="dv-num">${num}</span> <span ${editAttr(blockBind('title', i, j), j === undefined ? 'Назва розділу' : 'Назва підрозділу')}>${esc(b.title)}</span></${tag}>
-          <div class="dv-text" ${editAttr(blockBind('text', i, j), 'Текст — що зроблено, які результати', 'paras')}>${paras(b.text)}</div>`;
-      if (b.code) {
-        listing++;
-        html += `<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${listing} – ${esc(title)}</p>
-          <pre class="dv-code" ${editAttr(blockBind('code', i, j), 'Код', 'code')}>${esc(b.code.replace(/\r/g, ''))}</pre>`;
-      }
-      for (const img of images.filter(im => im.section_path === path)) {
-        figure++;
-        html += `<figure class="dv-fig" data-img="${img.id}">
-            <img src="${API_URL}${img.url}" alt="">
-            <figcaption>Рисунок ${figure} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
-            <button class="dv-fig-del" data-act="delimg" data-img="${img.id}" title="Видалити рисунок">${ICONS.trash}</button>
-          </figure>`;
-      }
-      return html + '</div>';
-    };
-
-    const toc = [['МЕТА РОБОТИ', 1]];
-    doc.sections.forEach((s, i) => {
-      toc.push([`${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`, 1, `${i}`]);
-      s.subsections.forEach((b, j) => toc.push([`${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`, 2, `${i}.${j}`]));
-    });
-    toc.push(['ВИСНОВКИ', 1]);
-
-    pages.innerHTML = titlePage + `
-      <section class="dv-sheet dv-toc">
-        <p class="dv-toc-title">ЗМІСТ</p>
-        ${toc.map(([t, l]) => `<p class="dv-toc-row l${l}"><span>${esc(t)}</span><i></i></p>`).join('')}
-        <p class="dv-note">Зміст складається автоматично; номери сторінок з'являться в документі (вкладка PDF).</p>
-      </section>
-      <section class="dv-sheet dv-body">
-        <h1 class="dv-h">Мета роботи</h1>
-        <div class="dv-text" ${editAttr('doc|goal', 'Мета роботи', 'paras')}>${paras(doc.goal)}</div>
-        ${doc.sections.map((s, i) => blockHtml(s, i) + s.subsections.map((b, j) => blockHtml(b, i, j)).join('')).join('')}
-        <button class="dv-add" data-act="section">${ICONS.plus} Додати розділ ${doc.sections.length + 1}</button>
-        <h1 class="dv-h">Висновки</h1>
-        <div class="dv-text" ${editAttr('doc|conclusion', 'Висновки (можна згенерувати в редакторі)', 'paras')}>${paras(doc.conclusion)}</div>
-      </section>`;
-
+    pages.innerHTML = buildDocSheets(doc, images, { editable: true });
     pages.querySelectorAll('[data-bind]').forEach(markEmpty);
     renderOutlineNav();
     $('.pv-stage[data-mode="edit"]').scrollTop = scrollTop;
@@ -1410,6 +1618,12 @@ async function openPreview(id, title, opts = {}) {
         render(); status(statusText());
       };
       input.click();
+    } else if (act === 'viewimg') {
+      openLightbox(docOrder(images), Number(btn.dataset.img));
+    } else if (act === 'imgup' || act === 'imgdown') {
+      images = await moveImage(id, images, Number(btn.dataset.img), act === 'imgup' ? -1 : 1);
+      changed = true; filesStale = viewStale = true;
+      render();
     } else if (act === 'delimg') {
       const imgId = Number(btn.dataset.img);
       if (!confirm('Видалити цей рисунок?')) return;
@@ -1537,7 +1751,9 @@ function createPdfView(root, id) {
     canvas.height = Math.floor(vp.height * dpr);
     canvas.style.width = `${vp.width}px`;
     canvas.style.height = `${vp.height}px`;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+    try {
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+    } catch { return; }               // cancelled by a re-render (zoom) or the PDF was closed
     target.replaceChildren(canvas);
     target.classList.add('ready');
   }

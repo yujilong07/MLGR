@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <div class="app-layout">
@@ -92,7 +92,7 @@
                 <input id="f-group" type="text" placeholder="КІТІ-23-1">
               </div>
             </div>
-            <div class="form-row">
+            <div class="form-row people-row">
               <div class="form-group">
                 <label for="f-student">Студент</label>
                 <div class="person-field">
@@ -139,6 +139,17 @@
         </section>
 
       </div>
+
+      <aside class="live-panel card" aria-label="Живий перегляд документа">
+        <div class="panel-head">
+          <h2 class="panel-title">Як виглядатиме</h2>
+          <button id="btn-live-open" class="btn btn-ghost btn-sm" title="Відкрити документ для редагування">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            Відкрити
+          </button>
+        </div>
+        <div class="live-stage"><div class="live-pages" id="live-pages"></div></div>
+      </aside>
 
       <div class="ai-panel">
 
@@ -197,6 +208,6 @@
   </main>
 </div>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
