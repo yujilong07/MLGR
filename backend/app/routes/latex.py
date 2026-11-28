@@ -16,8 +16,16 @@ from app.services.image_store import ensure_all_local
 from app.services.latex_doc import export_tex_zip, parse_latex_body, to_latex_body
 from app.services.math_render import check_latex
 from app.services.py_latex import PythonFormulaError, python_to_latex
+from app.services.templates import public_templates
 
 latex_router = APIRouter()
+
+
+@latex_router.get('/templates')
+async def templates():
+    """Title page templates (drawn the same way by the browser preview and the builders)
+    and suggestions for the institution field."""
+    return public_templates()
 
 
 class PythonSource(BaseModel):

@@ -13,12 +13,12 @@ import itertools
 import re
 
 from app.services.content import split_inline
-from app.services.docx_builder import _year
 from app.services.math_render import FormulaError, latex_to_svg
 from app.services.report_outline import (
     Figure, Formula, Heading, Listing, References, Text,
-    essay_people, is_essay, iter_report_blocks, signature_rows, text_lines,
+    is_essay, iter_report_blocks, text_lines,
 )
+from app.services.templates import resolve_title_page
 
 EMU_PER_MM = 36000
 
@@ -66,9 +66,8 @@ pre {
 /* essay: title page and ЗМІСТ are counted but carry no page number */
 @page front { @top-right { content: none; } }
 .essay .title, .essay .toc { page: front; }
-.essay .title { display: flex; flex-direction: column; height: 257mm; }
-.essay .title .push { flex: 1; }
-.essay .title .big { font-size: 16pt; font-weight: bold; }
+.title { display: flex; flex-direction: column; height: 257mm; }
+.title .push { flex: 1; }
 .field { display: flex; text-indent: 0; text-align: left; }
 .field .u { flex: 1; border-bottom: 1px solid #000; text-align: center; padding: 0 4px; }
 .field .lbl { padding-right: 6px; white-space: pre; }
@@ -131,46 +130,31 @@ def _paragraphs(text, cls=None):
     return ''.join(f'<p{attr}>{_inline_html(line)}</p>' for line in text_lines(text))
 
 
-def _essay_title_page(report, student_name):
+def _title_page(report):
+    """Draws the report's title page template (services/templates.py)."""
     blank = '<p>&nbsp;</p>'
-    line = lambda text, cls="": f'<p class="{cls}">{escape(text)}</p>'
-    field = lambda label, value: (f'<p class="field"><span class="lbl">{escape(label)}</span>'
-                                  f'<span class="u">{escape(value or "")}&nbsp;</span></p>')
-    hint = lambda text: f'<p class="hint">{escape(text)}</p>'
-    did, lines, checked, teacher = essay_people(report, student_name)
-    people = ''.join(field(did if k == 0 else " " * len(did), l) + hint("(дата, група, прізвище, ініціали)")
-                     for k, l in enumerate(lines))
-    return (
-        '<section class="title">'
-        + line("Міністерство освіти і науки України")
-        + line("Харківський національний університет радіоелектроніки") + blank * 2
-        + field("Факультет", getattr(report, "faculty", "")) + field("Кафедра", getattr(report, "department", ""))
-        + blank * 3 + line("РЕФЕРАТ", "big") + blank
-        + field("на тему:", report.title) + hint("(тема реферату)") + blank
-        + field("", report.discipline) + hint("(дисципліна)") + blank * 2
-        + people + blank
-        + field(checked, teacher) + hint("(посада, прізвище, ініціали)")
-        + '<div class="push"></div>'
-        + line(f"Харків {_year(report)} р.")
-        + '</section>'
-    )
-
-
-def _title_page(report, student_name):
-    blank = '<p>&nbsp;</p>'
-    line = lambda text: f'<p>{escape(text or "")}</p>' if text else blank
-    rows = signature_rows(report, student_name)
-    table = ''.join(f'<tr><td>{line(a)}</td><td>{line(b)}</td></tr>' for a, b in rows)
-    return (
-        '<section class="title">'
-        + line("Міністерство освіти і науки України")
-        + line("Харківський національний університет радіоелектроніки")
-        + blank + line(f"Кафедра {(getattr(report, 'department', '') or 'штучного інтелекту').strip()}") + blank * 4
-        + line(f"Дисципліна «{report.discipline}»") + line(report.title) + blank * 5
-        + f'<table class="signatures">{table}</table>' + blank * max(2, 6 - len(rows))
-        + line(f"Харків – {datetime.now().year}")
-        + '</section>'
-    )
+    out, last_label = [], ""
+    for el in resolve_title_page(report):
+        kind = el["t"]
+        if kind == "line":
+            style = f'text-align:{el["align"]};font-size:{el["size"]}pt;' + ('font-weight:bold;' if el["bold"] else '')
+            out.append(f'<p style="{style}">{escape(el["text"]) or "&nbsp;"}</p>')
+        elif kind == "blank":
+            out.append(blank * el["n"])
+        elif kind == "field":
+            label = el["label"] or (last_label if el.get("indent") else "")
+            hidden = ' style="visibility:hidden"' if el.get("indent") else ''
+            last_label = el["label"] or last_label
+            out.append(f'<p class="field"><span class="lbl"{hidden}>{escape(label)}</span>'
+                       f'<span class="u">{escape(el["value"])}&nbsp;</span></p>')
+            if el.get("hint"):
+                out.append(f'<p class="hint">{escape(el["hint"])}</p>')
+        elif kind == "columns":
+            cell = lambda lines: ''.join(f'<p>{escape(t) or "&nbsp;"}</p>' for t in lines)
+            out.append(f'<table class="signatures"><tr><td>{cell(el["left"])}</td><td>{cell(el["right"])}</td></tr></table>')
+        elif kind == "push":
+            out.append('<div class="push"></div>')
+    return '<section class="title">' + ''.join(out) + '</section>'
 
 
 def _figure_style(path):
@@ -212,7 +196,7 @@ def build_report_html(report, images=None, student_name=""):
     return (
         f'<!DOCTYPE html><html lang="uk"><head><meta charset="utf-8"><style>{CSS}</style></head>'
         f'<body class="{"essay" if essay else "lab"}">'
-        + (_essay_title_page(report, student_name) if essay else _title_page(report, student_name))
+        + _title_page(report)
         + '<section class="toc"><p class="toc-title">ЗМІСТ</p>' + ''.join(toc) + '</section>'
         + ''.join(body)
         + '</body></html>'

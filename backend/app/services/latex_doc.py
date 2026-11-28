@@ -16,7 +16,8 @@ import re
 import zipfile
 
 from app.services.content import item_blocks, split_inline
-from app.services.report_outline import essay_people, is_essay, signature_rows
+from app.services.report_outline import is_essay
+from app.services.templates import resolve_title_page
 
 # ── text escaping ────────────────────────────────────────────────────────────
 
@@ -511,45 +512,34 @@ def _tex_line(text):
     return escape_text(text or "")
 
 
-def _lab_title(report) -> str:
-    rows = signature_rows(report)
-    table = "\\\\\n".join(f"{_tex_line(a)} & {_tex_line(b)}" for a, b in rows)
-    dept = (getattr(report, "department", "") or "штучного інтелекту").strip()
-    return (
-        "\\begin{titlepage}\n\\begin{center}\n"
-        "Міністерство освіти і науки України\\\\\nХарківський національний університет радіоелектроніки\\\\[1em]\n"
-        f"Кафедра {_tex_line(dept)}\n\\vspace{{6em}}\n\n"
-        f"Дисципліна «{_tex_line(report.discipline)}»\\\\\n{_tex_line(report.title)}\n\\vspace{{6em}}\n\n"
-        "\\begin{tabular}{p{0.45\\textwidth}p{0.45\\textwidth}}\n" + table + "\n\\end{tabular}\n\\vfill\n"
-        "Харків -- \\the\\year\n\\end{center}\n\\end{titlepage}\n"
-    )
-
-
-def _essay_title(report) -> str:
-    did, lines, checked, teacher = essay_people(report)
-    field = lambda label, value: f"{label} \\underline{{\\makebox[0.75\\textwidth]{{{_tex_line(value)}}}}}\\\\"
-
-    def hint(text, newline=True):
-        small = f"{{\\fontsize{{10}}{{11}}\\selectfont {text}}}"
-        return small + "\\\\[0.6em]" if newline else small
-
-    people = "\n".join(field(did if k == 0 else "\\phantom{" + did + "}", l) + "\n" + hint("(дата, група, прізвище, ініціали)")
-                       for k, l in enumerate(lines))
-    year = (getattr(report, "work_date", "") or "")[-4:]
-    year = year if year.isdigit() else "\\the\\year"
-    return (
-        "\\begin{titlepage}\n\\begin{center}\n"
-        "Міністерство освіти і науки України\\\\\nХарківський національний університет радіоелектроніки\\\\[3em]\n"
-        "\\end{center}\n\\noindent\n"
-        + field("Факультет", getattr(report, "faculty", "")) + "\n"
-        + field("Кафедра", getattr(report, "department", "")) + "\n"
-        "\\vspace{4em}\n\\begin{center}{\\fontsize{16}{20}\\selectfont\\bfseries РЕФЕРАТ}\\end{center}\n\\noindent\n"
-        + field("на тему:", report.title) + "\n\\centerline{" + hint("(тема реферату)", False) + "}\n\\noindent\n"
-        + field("", report.discipline) + "\n\\centerline{" + hint("(дисципліна)", False) + "}\n"
-        "\\vspace{3em}\n\\noindent\n" + people + "\n\\vspace{1em}\n\\noindent\n"
-        + field(checked, teacher) + "\n" + hint("(посада, прізвище, ініціали)") + "\n"
-        f"\\vfill\n\\begin{{center}}Харків {year} р.\\end{{center}}\n\\end{{titlepage}}\n"
-    )
+def _title_page_tex(report) -> str:
+    """The report's title page template (services/templates.py) as a titlepage."""
+    out, last_label = [], ""
+    small = lambda text: f"{{\\fontsize{{10}}{{11}}\\selectfont {text}}}"
+    for el in resolve_title_page(report):
+        kind = el["t"]
+        if kind == "line":
+            text = _tex_line(el["text"]) or "~"
+            if el["bold"] or el["size"] != 14:
+                text = f"{{\\fontsize{{{el['size']}}}{{{round(el['size'] * 1.25)}}}\\selectfont" + \
+                       ("\\bfseries " if el["bold"] else " ") + text + "}"
+            out.append(f"\\centerline{{{text}}}" if el["align"] == "center" else f"\\noindent {text}\\par")
+        elif kind == "blank":
+            out.append(f"\\vspace*{{{el['n']}\\baselineskip}}")
+        elif kind == "field":
+            label = el["label"] or (last_label if el.get("indent") else "")
+            last_label = el["label"] or last_label
+            shown = f"\\phantom{{{_tex_line(label)}}}" if el.get("indent") else _tex_line(label)
+            out.append(f"\\noindent {shown} \\underline{{\\makebox[0.72\\textwidth]{{{_tex_line(el['value'])}}}}}\\par")
+            if el.get("hint"):
+                out.append(f"\\centerline{{{small(_tex_line(el['hint']))}}}")
+        elif kind == "columns":
+            col = lambda lines: "\\\\ ".join(_tex_line(t) for t in lines) or "~"
+            out.append("\\noindent\\begin{tabular}{@{}p{0.48\\textwidth}p{0.48\\textwidth}@{}}\n"
+                       f"{col(el['left'])} & {col(el['right'])}\n\\end{{tabular}}\\par")
+        elif kind == "push":
+            out.append("\\vfill")
+    return "\\begin{titlepage}\n" + "\n".join(out) + "\n\\end{titlepage}\n"
 
 
 def build_tex_document(report, body: str) -> str:
@@ -564,7 +554,7 @@ def build_tex_document(report, body: str) -> str:
                      + "\\numberwithin{equation}{section}",
     }.items():
         preamble = preamble.replace(f"@@{key}@@", value)
-    title = _essay_title(report) if essay else _lab_title(report)
+    title = _title_page_tex(report)
     return (
         preamble + "\n\\begin{document}\n" + title
         + "\\setcounter{page}{2}\n\\thispagestyle{empty}\n\\tableofcontents\n\\clearpage\n\n"

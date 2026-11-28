@@ -14,8 +14,9 @@ from app.services.content import split_inline
 from app.services.math_render import FormulaError, latex_to_omml
 from app.services.report_outline import (
     Figure, Formula, Heading, Listing, References, Text,
-    essay_people, is_essay, iter_report_blocks, signature_rows, text_lines,
+    is_essay, iter_report_blocks, text_lines,
 )
+from app.services.templates import resolve_title_page
 
 # A4, margins 30/20/20/20 mm (ДСТУ 3008:2015)
 TEXT_WIDTH = Mm(160)
@@ -228,52 +229,6 @@ def _remove_table_borders(table):
     })
 
 
-def add_title_page(document, report, student_name=""):
-    year = datetime.now().year
-
-    _centered(document, "Міністерство освіти і науки України")
-    _centered(document, "Харківський національний університет радіоелектроніки")
-    _centered(document, "")
-    _centered(document, f"Кафедра {(getattr(report, 'department', '') or 'штучного інтелекту').strip()}")
-
-    for _ in range(4):
-        _centered(document, "")
-
-    _centered(document, f"Дисципліна «{report.discipline}»")
-    _centered(document, report.title)
-
-    for _ in range(5):
-        _centered(document, "")
-
-    # Виконав / Прийняла side-by-side with borderless table
-    rows_data = signature_rows(report, student_name)
-    table = document.add_table(rows=len(rows_data), cols=2)
-    _remove_table_borders(table)
-
-    for row_idx, (left, right) in enumerate(rows_data):
-        for col_idx, text in enumerate((left, right)):
-            cell = table.cell(row_idx, col_idx)
-            para = cell.paragraphs[0]
-            para.paragraph_format.first_line_indent = Cm(0)
-            para.paragraph_format.space_before = Pt(0)
-            para.paragraph_format.space_after = Pt(0)
-            run = para.add_run(text)
-            set_font(run)
-
-    for _ in range(max(2, 6 - len(rows_data))):
-        _centered(document, "")
-
-    _centered(document, f"Харків – {year}")
-
-    document.add_page_break()
-
-
-def _year(report):
-    """Year from the essay date ("13.10.2025"), else the current one."""
-    digits = (getattr(report, "work_date", "") or "").strip()[-4:]
-    return digits if digits.isdigit() else str(datetime.now().year)
-
-
 def _hint(document, text):
     """Small caption under a title page field: "(тема реферату)"."""
     p = _centered(document, text, size=10)
@@ -281,14 +236,14 @@ def _hint(document, text):
     return p
 
 
-def _field_line(document, label, value):
-    """«label ______value______» — the value underlined to the right margin, as in the
-    методичка template (underlined tabs make the line)."""
+def _field_line(document, label, value, aligned=False):
+    """«label ______value______» — the value underlined to the right margin
+    (underlined tabs draw the line, as in the usual Word templates)."""
     p = document.add_paragraph()
     p.paragraph_format.first_line_indent = Cm(0)
     p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     stops = p.paragraph_format.tab_stops
-    stops.add_tab_stop(Mm(92) if label else Mm(80), WD_TAB_ALIGNMENT.CENTER)
+    stops.add_tab_stop(Mm(92) if label or aligned else Mm(80), WD_TAB_ALIGNMENT.CENTER)
     stops.add_tab_stop(TEXT_WIDTH, WD_TAB_ALIGNMENT.RIGHT)
     if label:
         set_font(p.add_run(f"{label} "))
@@ -299,38 +254,55 @@ def _field_line(document, label, value):
     return p
 
 
-def add_title_page_essay(document, report, student_name=""):
-    """Title page of a реферат (template ФШІ ІТШ)."""
-    _centered(document, "Міністерство освіти і науки України")
-    _centered(document, "Харківський національний університет радіоелектроніки")
-    for _ in range(2):
-        _centered(document, "")
-    _field_line(document, "Факультет", (getattr(report, "faculty", "") or "").strip())
-    _field_line(document, "Кафедра", (getattr(report, "department", "") or "").strip())
-    for _ in range(3):
-        _centered(document, "")
-    _centered(document, "РЕФЕРАТ", bold=True, size=16)
-    _centered(document, "")
-    _field_line(document, "на тему:", report.title)
-    _hint(document, "(тема реферату)")
-    _centered(document, "")
-    _field_line(document, "", report.discipline)
-    _hint(document, "(дисципліна)")
-    for _ in range(2):
-        _centered(document, "")
+def _aligned(document, text, align="center", size=14, bold=False):
+    p = _centered(document, text, bold=bold, size=size)
+    if align == "left":
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    return p
 
-    did, lines, checked, teacher = essay_people(report, student_name)
-    for k, line in enumerate(lines):
-        _field_line(document, did if k == 0 else " " * len(did), line)
-        _hint(document, "(дата, група, прізвище, ініціали)")
-    _centered(document, "")
-    _field_line(document, checked, teacher)
-    _hint(document, "(посада, прізвище, ініціали)")
 
-    # Push "Харків 2025 р." to the bottom of the page
-    for _ in range(max(1, 6 - 2 * len(lines))):
-        _centered(document, "")
-    _centered(document, f"Харків {_year(report)} р.")
+# Lines of 14 pt / 1.5 that fit on the title page before its last line
+_TITLE_PAGE_LINES = 27
+
+
+def add_title_page(document, report, student_name=""):
+    """Draws the report's title page template (services/templates.py)."""
+    used, push = 0.0, None
+    for el in resolve_title_page(report):
+        kind = el["t"]
+        if kind == "line":
+            _aligned(document, el["text"], el["align"], el["size"], el["bold"])
+            used += el["size"] / 14
+        elif kind == "blank":
+            for _ in range(el["n"]):
+                _centered(document, "")
+            used += el["n"]
+        elif kind == "field":
+            _field_line(document, el["label"], el["value"], aligned=el.get("indent", False))
+            used += 1
+            if el.get("hint"):
+                _hint(document, el["hint"])
+                used += 0.5
+        elif kind == "columns":
+            rows = max(len(el["left"]), len(el["right"]))
+            table = document.add_table(rows=rows, cols=2)
+            _remove_table_borders(table)
+            for col, lines in enumerate((el["left"], el["right"])):
+                for row, text in enumerate(lines):
+                    para = table.cell(row, col).paragraphs[0]
+                    para.paragraph_format.first_line_indent = Cm(0)
+                    para.paragraph_format.space_before = Pt(0)
+                    para.paragraph_format.space_after = Pt(0)
+                    set_font(para.add_run(text))
+            used += rows
+        elif kind == "push":
+            push = _centered(document, "")
+            used += 1
+    # "push": blank lines so that what follows ends up at the bottom of the page
+    if push is not None:
+        for _ in range(max(0, int(_TITLE_PAGE_LINES - used))):
+            filler = push.insert_paragraph_before()
+            filler.paragraph_format.first_line_indent = Cm(0)
     document.add_page_break()
 
 
@@ -569,12 +541,11 @@ def apply_toc_pages(docx_path, pages):
 def build_report_docx(report, images=None, student_name=""):
     essay = is_essay(report)
     document = create_base_doc()
+    add_title_page(document, report, student_name)
     if essay:
-        add_title_page_essay(document, report, student_name)
         toc_placeholder = add_table_of_contents(document, page_break=False)
         start_numbered_section(document)
     else:
-        add_title_page(document, report, student_name)
         toc_placeholder = add_table_of_contents(document)
 
     # Body starts after the title page and the TOC page(s)

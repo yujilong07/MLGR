@@ -1,7 +1,7 @@
 """Student name / gender fields, title page wording and report image management."""
 from types import SimpleNamespace
 
-from app.services.report_outline import signature_rows
+from app.services.templates import resolve_title_page
 from tests.conftest import make_png
 
 
@@ -29,16 +29,22 @@ def test_invalid_gender_rejected(client, auth_headers, report_id):
 
 
 def _report(**kw):
-    data = dict(group="КНТ-22-1", teacher="Іваненко І. І.", student_name="Петренко О. О.",
-                student_gender="m", teacher_gender="f")
+    data = dict(kind="lab", level="university", group="КНТ-22-1", teacher="Іваненко І. І.",
+                student_name="Петренко О. О.", student_gender="m", teacher_gender="f")
     data.update(kw)
     return SimpleNamespace(**data)
 
 
+def _signatures(report):
+    return next(el for el in resolve_title_page(report) if el["t"] == "columns")
+
+
 def test_signature_rows_by_gender():
-    assert signature_rows(_report())[0] == ("Виконав:", "Прийняла:")
-    assert signature_rows(_report(student_gender="f", teacher_gender="m"))[0] == ("Виконала:", "Прийняв:")
-    assert signature_rows(_report())[2] == ("Петренко О. О.", "")
+    cols = _signatures(_report())
+    assert (cols["left"][0], cols["right"][0]) == ("Виконав:", "Прийняла:")
+    cols = _signatures(_report(student_gender="f", teacher_gender="m"))
+    assert (cols["left"][0], cols["right"][0]) == ("Виконала:", "Прийняв:")
+    assert _signatures(_report())["left"][2] == "Петренко О. О."
 
 
 def _upload(client, auth_headers, report_id, tmp_path=None, monkeypatch=None, path="0", **png):

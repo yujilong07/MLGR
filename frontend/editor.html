@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <div class="app-layout">
@@ -15,7 +15,7 @@
     <div class="sb-logo">
       <a href="dashboard.html" class="brand">
         <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></span>
-        <span><span class="logo-name">MLGR</span><span class="logo-sub" style="display:block">Звіти · ХНУРЕ</span></span>
+        <span><span class="logo-name">MLGR</span><span class="logo-sub" style="display:block">Звіти · ДСТУ 3008</span></span>
       </a>
     </div>
 
@@ -28,6 +28,10 @@
       <a href="editor.html" class="nav-link active">
         <svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
         Редактор
+      </a>
+      <a href="#" class="nav-link" id="nav-profile">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="4"/></svg>
+        Мої дані
       </a>
     </nav>
 
@@ -84,15 +88,42 @@
 
         <section class="card">
           <div class="panel-head">
-            <h2 class="panel-title">Основне</h2>
-            <span class="badge">Титульна сторінка</span>
+            <h2 class="panel-title">Титульна сторінка</h2>
+            <button id="btn-remember" class="btn btn-ghost btn-sm" type="button"
+                    title="Заклад, група й ПІБ підставлятимуться в кожен новий звіт">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+              Запам’ятати як мої дані
+            </button>
           </div>
           <div class="panel-body">
+            <div class="form-group">
+              <label>Навчальний заклад</label>
+              <div class="seg seg-lg" role="radiogroup" aria-label="Тип закладу" id="level-seg">
+                <button type="button" data-level="university" role="radio">Університет / коледж</button>
+                <button type="button" data-level="school" role="radio">Школа, ліцей, гімназія</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="f-institution">Назва закладу</label>
+              <input id="f-institution" type="text" list="institution-list" autocomplete="off"
+                     data-uni-ph="Харківський національний університет радіоелектроніки" data-school-ph="Ліцей № 145 Печерського району м. Києва">
+              <datalist id="institution-list"></datalist>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="f-city">Місто</label>
+                <input id="f-city" type="text" placeholder="Харків">
+              </div>
+              <div class="form-group">
+                <label for="f-ministry">Рядок над назвою <span class="text-muted">— можна очистити</span></label>
+                <input id="f-ministry" type="text" placeholder="Міністерство освіти і науки України">
+              </div>
+            </div>
             <div class="form-group">
               <label for="f-title" id="lbl-title">Назва роботи</label>
               <input id="f-title" type="text" placeholder="Лабораторна робота №1. Дослідження алгоритмів сортування">
             </div>
-            <div class="form-row">
+            <div class="form-row uni-only">
               <div class="form-group essay-only">
                 <label for="f-faculty">Факультет</label>
                 <input id="f-faculty" type="text" placeholder="Комп’ютерних наук">
@@ -104,17 +135,17 @@
             </div>
             <div class="form-row">
               <div class="form-group">
-                <label for="f-discipline">Дисципліна</label>
-                <input id="f-discipline" type="text" placeholder="Алгоритми та структури даних">
+                <label for="f-discipline" data-uni="Дисципліна" data-school="Предмет">Дисципліна</label>
+                <input id="f-discipline" type="text" data-uni-ph="Алгоритми та структури даних" data-school-ph="Фізика">
               </div>
               <div class="form-group">
-                <label for="f-group">Група</label>
-                <input id="f-group" type="text" placeholder="КІТІ-23-1">
+                <label for="f-group" data-uni="Група" data-school="Клас">Група</label>
+                <input id="f-group" type="text" data-uni-ph="КІТІ-23-1" data-school-ph="9-А">
               </div>
             </div>
             <div class="form-row people-row">
               <div class="form-group">
-                <label for="f-student">Студент <span class="text-muted">— кілька: кожен з нового рядка</span></label>
+                <label for="f-student"><span data-uni="Студент" data-school="Учень / учениця">Студент</span> <span class="text-muted">— кілька: кожен з нового рядка</span></label>
                 <div class="person-field">
                   <textarea id="f-student" rows="1" class="one-line" placeholder="Петренко О. О."></textarea>
                   <div class="seg" role="radiogroup" aria-label="Стать студента" data-gender="student">
@@ -124,22 +155,22 @@
                 </div>
               </div>
               <div class="form-group">
-                <label for="f-teacher">Викладач</label>
+                <label for="f-teacher" data-uni="Викладач" data-school="Вчитель">Викладач</label>
                 <div class="person-field">
                   <input id="f-teacher" type="text" placeholder="Іваненко І. І.">
                   <div class="seg" role="radiogroup" aria-label="Стать викладача" data-gender="teacher">
-                    <button type="button" data-g="m" role="radio" data-lab="Прийняв" data-essay="Перевірив">Прийняв</button>
-                    <button type="button" data-g="f" role="radio" data-lab="Прийняла" data-essay="Перевірила">Прийняла</button>
+                    <button type="button" data-g="m" role="radio" data-lab="Прийняв" data-essay="Перевірив" data-school="Перевірив">Прийняв</button>
+                    <button type="button" data-g="f" role="radio" data-lab="Прийняла" data-essay="Перевірила" data-school="Перевірила">Прийняла</button>
                   </div>
                 </div>
               </div>
             </div>
-            <div class="form-row essay-only">
+            <div class="form-row pos-row">
               <div class="form-group">
-                <label for="f-position">Посада викладача</label>
-                <input id="f-position" type="text" placeholder="ас. каф. ШІ">
+                <label for="f-position" data-uni="Посада викладача" data-school="Посада вчителя">Посада викладача</label>
+                <input id="f-position" type="text" data-uni-ph="ас. каф. ШІ" data-school-ph="вчитель фізики">
               </div>
-              <div class="form-group">
+              <div class="form-group essay-only uni-only">
                 <label for="f-date">Дата на титулці</label>
                 <input id="f-date" type="text" placeholder="13.10.2025">
               </div>
@@ -267,6 +298,6 @@
   </main>
 </div>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

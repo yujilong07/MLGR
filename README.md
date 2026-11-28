@@ -1,6 +1,6 @@
 # MLGR — Lab Report Generator
 
-**MLGR** is a web application for ХНУРЕ students that turns your raw lab work notes into a properly formatted `.docx` report in seconds, with AI writing the parts you hate most.
+**MLGR** is a web application for students of any Ukrainian university or college — and for school pupils — that turns raw notes into a properly formatted lab report or essay (`.docx`, PDF or LaTeX) in seconds, with AI writing the parts you hate most.
 
 ---
 
@@ -11,7 +11,8 @@ You fill in the basics — discipline, teacher, group, goal, and your section no
 - **AI-written introduction** — one click generates a full introduction based on your stated goal.
 - **AI section improvement** — paste rough text into any section and get a polished, academic-sounding version back.
 - **AI-streamed conclusion** — the conclusion writes itself in real time as you watch, token by token.
-- **One-click `.docx` export** — generates a Word document that follows ХНУРЕ formatting guidelines (Times New Roman 14pt, 1.5 spacing, correct margins, heading hierarchy, table of contents, title page, listings, and image captions).
+- **One-click `.docx` export** — generates a Word document formatted to ДСТУ 3008:2015 (Times New Roman 14pt, 1.5 spacing, correct margins, heading hierarchy, table of contents, title page, listings, formulas and image captions).
+- **Title page templates** — university / college and school templates for lab reports and essays (`backend/app/services/templates.py`); the institution, city and the rest come from the report or from the user's saved profile ("Мої дані").
 - **Image uploads** — attach screenshots or diagrams to specific sections; they appear in the document with proper numbered captions.
 - **Report dashboard** — all your reports in one place with search and quick download.
 - **Disciplines view** — reports grouped by discipline, so finding last semester's OS lab doesn't mean scrolling through everything.
@@ -66,7 +67,7 @@ Every exported `.docx` includes:
 - **Мета роботи** section
 - Numbered sections with text, code listings (Courier New 12pt), and inline images
 - **Висновки** section
-- All formatted to ДСТУ 3008:2015 / ХНУРЕ department requirements
+- All formatted to ДСТУ 3008:2015
 
 ---
 

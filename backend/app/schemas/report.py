@@ -4,11 +4,13 @@ from typing import Any, Literal, Optional
 
 Gender = Literal["m", "f"]
 Kind = Literal["lab", "essay"]
+Level = Literal["university", "school"]
 EditorMode = Literal["form", "latex"]
 
 
 class ReportCreate(BaseModel):
     kind: Kind = "lab"
+    level: Level = "university"
     title: str
     discipline: str
     teacher: str
@@ -16,6 +18,9 @@ class ReportCreate(BaseModel):
     student_name: str = ""
     student_gender: Gender = "m"
     group: str
+    ministry: str = "Міністерство освіти і науки України"
+    institution: str = ""
+    city: str = ""
     faculty: str = ""
     department: str = ""
     teacher_position: str = ""
@@ -31,6 +36,7 @@ class ReportCreate(BaseModel):
 
 class ReportUpdate(BaseModel):
     kind: Optional[Kind] = None
+    level: Optional[Level] = None
     title: Optional[str] = None
     discipline: Optional[str] = None
     teacher: Optional[str] = None
@@ -38,6 +44,9 @@ class ReportUpdate(BaseModel):
     student_name: Optional[str] = None
     student_gender: Optional[Gender] = None
     group: Optional[str] = None
+    ministry: Optional[str] = None
+    institution: Optional[str] = None
+    city: Optional[str] = None
     faculty: Optional[str] = None
     department: Optional[str] = None
     teacher_position: Optional[str] = None
@@ -54,6 +63,7 @@ class ReportUpdate(BaseModel):
 class ReportResponse(BaseModel):
     id: int
     kind: str
+    level: str
     title: str
     discipline: str
     teacher: str
@@ -61,6 +71,9 @@ class ReportResponse(BaseModel):
     student_name: str
     student_gender: str
     group: str
+    ministry: str
+    institution: str
+    city: str
     faculty: str
     department: str
     teacher_position: str

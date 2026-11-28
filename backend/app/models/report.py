@@ -9,6 +9,8 @@ class Report(SQLModel,table = True):
     user_id: int = Field(foreign_key="user.id")
     # "lab" — лабораторна / практична, "essay" — реферат (other title page and structure)
     kind: str = Field(default="lab", max_length=8)
+    # "university" (also college) or "school" — picks the title page template (services/templates.py)
+    level: str = Field(default="university", max_length=16)
     title :str
     discipline: str
     teacher : str
@@ -17,6 +19,9 @@ class Report(SQLModel,table = True):
     student_name: str = Field(default="")
     student_gender: str = Field(default="m", max_length=1)
     group: str
+    ministry: str = Field(default="Міністерство освіти і науки України")
+    institution: str = Field(default="")
+    city: str = Field(default="")
     faculty: str = Field(default="")
     department: str = Field(default="")
     teacher_position: str = Field(default="")

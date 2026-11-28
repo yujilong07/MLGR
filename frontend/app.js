@@ -37,7 +37,11 @@ async function req(method, path, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) { auth.clearToken(); auth.clearUser(); window.location.href = 'index.html'; return; }
+  // 401 on a normal request = the session expired -> back to the start page. But a wrong password
+  // on /auth/login is also 401: that one must reach the form as an error message
+  if (res.status === 401 && !path.startsWith('/auth/login') && !path.startsWith('/auth/register')) {
+    auth.clearToken(); auth.clearUser(); window.location.href = 'index.html'; return;
+  }
   if (res.status === 204) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -304,6 +308,214 @@ function fillSidebar() {
   if (emailEl) emailEl.textContent = u?.email ?? '';
   if (avaEl)   avaEl.textContent   = initials(u?.email);
   document.getElementById('sb-logout')?.addEventListener('click', auth.logout);
+  document.getElementById('nav-profile')?.addEventListener('click', e => { e.preventDefault(); openProfileModal(); });
+}
+
+/* ═══════════════════════════════════════════════════════
+   TITLE PAGE TEMPLATES  (GET /templates — the same JSON the
+   .docx / PDF / LaTeX builders draw; services/templates.py)
+═══════════════════════════════════════════════════════ */
+let DOC_TPL = null;
+let tplPromise = null;
+
+function loadTemplates() {
+  if (DOC_TPL) return Promise.resolve(DOC_TPL);
+  tplPromise ??= req('GET', '/templates')
+    .then(data => (DOC_TPL = data))
+    .catch(ex => { tplPromise = null; throw ex; });
+  return tplPromise;
+}
+
+const FIELD_PH = {
+  ministry: 'міністерство', institution: 'назва навчального закладу', city: 'місто',
+  faculty: 'факультет', department: 'кафедра', discipline: 'дисципліна / предмет',
+  title: 'тема / назва роботи', group: 'група / клас', teacher: 'Прізвище І. Б.',
+  teacher_position: 'посада', work_date: 'дата',
+};
+
+// Datalist with Ukrainian universities for the institution field (free text stays allowed)
+function institutionOptions() {
+  return (DOC_TPL?.institutions || []).map(i => `<option value="${esc(i.name)}">${esc(i.city)}</option>`).join('');
+}
+const cityOf = name => DOC_TPL?.institutions.find(i => i.name === name)?.city;
+
+/**
+ * The title page of `doc` from its template. editAttr(bind, ph, kind) gives the
+ * attributes of an editable field (or plain ones in the read-only preview).
+ */
+function titlePageHtml(doc, editAttr, editable) {
+  const tpl = DOC_TPL?.templates[`${doc.level || 'university'}_${doc.kind || 'lab'}`]
+           || DOC_TPL?.templates[`university_${doc.kind || 'lab'}`];
+  if (!tpl) return `<section class="dv-sheet dv-title"><p>${esc(doc.title)}</p></section>`;
+
+  const names = docLines(doc.student_name);
+  const yearMatch = (doc.work_date || '').trim().slice(-4);
+  const year = /^\d{4}$/.test(yearMatch) ? yearMatch : String(new Date().getFullYear());
+  const word = key => {
+    const f = tpl.words[key];
+    const k = f.of === 'student'
+      ? (names.length > 1 ? 'pl' : doc.student_gender === 'f' ? 'f' : 'm')
+      : (doc.teacher_gender === 'f' ? 'f' : 'm');
+    return f[k] || f.m;
+  };
+  const field = name => `<span ${editAttr(`doc|${name}`, FIELD_PH[name] || name)}>${esc(doc[name] || '')}</span>`;
+  const namesBlock = () =>
+    `<span class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. (кожен з нового рядка)', 'paras')}>${mathParas(doc.student_name)}</span>`;
+  const city = editable || doc.city ? field('city') : '';
+
+  // Text with {placeholders} -> HTML; empty: whether all placeholders were empty
+  const fill = text => {
+    let empty = true, html = '', pos = 0;
+    for (const m of text.matchAll(/\{(\w+)\}/g)) {
+      html += esc(text.slice(pos, m.index));
+      pos = m.index + m[0].length;
+      const key = m[1];
+      if (tpl.words[key]) {
+        const of = tpl.words[key].of;
+        html += editable && !(of === 'student' && names.length > 1)
+          ? `<button class="dv-gender" data-gender="${of}" title="Натисніть, щоб змінити рід">${esc(word(key))}</button>`
+          : esc(word(key));
+        empty = false;
+      } else if (key === 'student' || key === 'students') {
+        html += namesBlock();
+        empty = empty && !names.length;
+      } else if (key === 'city_dash_year') {
+        html += city ? `${city} – ${year}` : year;
+        empty = false;
+      } else if (key === 'city_year_r') {
+        html += city ? `${city} ${year} р.` : `${year} р.`;
+        empty = false;
+      } else if (key === 'year') {
+        html += year; empty = false;
+      } else {
+        html += field(key);
+        if ((doc[key] || '').trim()) empty = false;
+      }
+    }
+    html += esc(text.slice(pos));
+    return { html, empty };
+  };
+  const visible = (spec, text) => !(spec.optional && /\{\w+\}/.test(text) && fill(text).empty && !editable);
+
+  const out = tpl.title_page.map(el => {
+    if (el.t === 'line') {
+      if (!visible(el, el.text)) return '';
+      const style = `text-align:${el.align || 'center'};font-size:${el.size || 14}pt;${el.bold ? 'font-weight:bold;' : ''}`;
+      return `<p style="${style}">${fill(el.text).html || '&nbsp;'}</p>`;
+    }
+    if (el.t === 'blank') return '<p>&nbsp;</p>'.repeat(el.n);
+    if (el.t === 'field') {
+      if (!visible(el, el.value)) return '';
+      return `<div class="dv-field"><span class="lbl">${fill(el.label).html}</span><span class="u">${fill(el.value).html}</span></div>`
+        + (el.hint ? `<p class="dv-hint">${esc(el.hint)}</p>` : '');
+    }
+    if (el.t === 'columns') {
+      const col = lines => lines.map(item => {
+        const spec = typeof item === 'string' ? { text: item } : item;
+        if (!spec.text) return '<p>&nbsp;</p>';
+        if (!visible(spec, spec.text)) return '';
+        return `<p>${fill(spec.text).html}</p>`;
+      }).join('');
+      return `<div class="dv-sign"><div>${col(el.left)}</div><div>${col(el.right)}</div></div>`;
+    }
+    if (el.t === 'push') return '<div class="dv-push"></div>';
+    return '';
+  }).join('');
+  return `<section class="dv-sheet dv-title">${out}</section>`;
+}
+
+/* "Мої дані": defaults for every new report */
+const PROFILE_FIELDS = ['level', 'ministry', 'institution', 'city', 'faculty', 'department', 'group', 'student_name', 'student_gender'];
+let profileCache = null;
+
+async function loadProfile() {
+  if (profileCache) return profileCache;
+  try { profileCache = await req('GET', '/auth/profile'); } catch { profileCache = {}; }
+  return profileCache;
+}
+
+async function saveProfile(values) {
+  const body = {};
+  PROFILE_FIELDS.forEach(k => { if (values[k] !== undefined && values[k] !== '') body[k] = values[k]; });
+  profileCache = await req('PUT', '/auth/profile', body);
+  return profileCache;
+}
+
+async function openProfileModal() {
+  await loadTemplates().catch(() => {});
+  const p = await loadProfile();
+  const box = document.createElement('div');
+  box.className = 'modal-wrap';
+  const school = p.level === 'school';
+  box.innerHTML = `
+    <form class="modal card profile-modal" role="dialog" aria-modal="true" aria-label="Мої дані">
+      <div class="panel-head"><h2 class="panel-title">Мої дані</h2>
+        <button type="button" class="pv-icon-btn" data-close title="Закрити">${ICONS.x}</button></div>
+      <div class="panel-body">
+        <p class="text-sm text-muted">Заповніть один раз — і кожен новий звіт чи реферат стартуватиме з цими даними.</p>
+        <div class="seg seg-lg" data-pf-level>
+          <button type="button" data-v="university" class="${school ? '' : 'on'}">Університет / коледж</button>
+          <button type="button" data-v="school" class="${school ? 'on' : ''}">Школа, ліцей, гімназія</button>
+        </div>
+        <div class="form-group"><label>Назва закладу</label>
+          <input name="institution" list="pf-institutions" value="${esc(p.institution || '')}" placeholder="Харківський національний університет радіоелектроніки">
+          <datalist id="pf-institutions">${institutionOptions()}</datalist></div>
+        <div class="form-row">
+          <div class="form-group"><label>Місто</label><input name="city" value="${esc(p.city || '')}" placeholder="Харків"></div>
+          <div class="form-group"><label>${school ? 'Клас' : 'Група'}</label><input name="group" value="${esc(p.group || '')}" placeholder="${school ? '9-А' : 'КНТ-22-1'}"></div>
+        </div>
+        <div class="form-row pf-uni ${school ? 'hidden' : ''}">
+          <div class="form-group"><label>Факультет</label><input name="faculty" value="${esc(p.faculty || '')}" placeholder="Комп’ютерних наук"></div>
+          <div class="form-group"><label>Кафедра</label><input name="department" value="${esc(p.department || '')}" placeholder="штучного інтелекту"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Прізвище та ініціали</label><input name="student_name" value="${esc(p.student_name || '')}" placeholder="Петренко О. О."></div>
+          <div class="form-group"><label>Рід у титулці</label>
+            <div class="seg" data-pf-gender>
+              <button type="button" data-v="m" class="${p.student_gender === 'f' ? '' : 'on'}">Виконав</button>
+              <button type="button" data-v="f" class="${p.student_gender === 'f' ? 'on' : ''}">Виконала</button>
+            </div></div>
+        </div>
+        <div class="form-group"><label>Рядок над назвою закладу <span class="text-muted">— можна очистити</span></label>
+          <input name="ministry" value="${esc(p.ministry ?? DOC_TPL?.ministry_default ?? '')}"></div>
+        <div class="flex gap-8" style="justify-content:flex-end">
+          <button type="button" class="btn btn-ghost btn-sm" data-close>Скасувати</button>
+          <button type="submit" class="btn btn-primary btn-sm">Зберегти</button>
+        </div>
+      </div>
+    </form>`;
+  document.body.appendChild(box);
+  const form = box.querySelector('form');
+  const segValue = sel => form.querySelector(`${sel} .on`)?.dataset.v;
+  const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
+  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  box.addEventListener('click', e => {
+    if (e.target === box || e.target.closest('[data-close]')) close();
+    const opt = e.target.closest('[data-pf-level] [data-v], [data-pf-gender] [data-v]');
+    if (opt) {
+      opt.parentElement.querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b === opt));
+      if (opt.closest('[data-pf-level]')) {
+        const isSchool = opt.dataset.v === 'school';
+        form.querySelector('.pf-uni').classList.toggle('hidden', isSchool);
+        form.querySelector('[name="group"]').previousElementSibling.textContent = isSchool ? 'Клас' : 'Група';
+      }
+    }
+  });
+  form.institution.addEventListener('change', () => { if (!form.city.value) form.city.value = cityOf(form.institution.value) || ''; });
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const values = Object.fromEntries(new FormData(form));
+    values.level = segValue('[data-pf-level]');
+    values.student_gender = segValue('[data-pf-gender]');
+    try {
+      await saveProfile(values);
+      toast('Збережено — нові звіти заповнюватимуться автоматично');
+      close();
+      document.dispatchEvent(new CustomEvent('profile-saved'));
+    } catch (ex) { toast(ex.message, 'err'); }
+  });
+  document.addEventListener('keydown', onKey, true);
+  form.institution.focus();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -325,13 +537,31 @@ function initAuth() {
     regForm.classList.remove('hidden');
   }
 
-  tabs.forEach(t => t.addEventListener('click', () => {
-    tabs.forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    const isLogin = t.dataset.tab === 'login';
-    loginForm.classList.toggle('hidden', !isLogin);
-    regForm.classList.toggle('hidden', isLogin);
-  }));
+  const showTab = name => {
+    tabs.forEach(x => x.classList.toggle('active', x.dataset.tab === name));
+    loginForm.classList.toggle('hidden', name !== 'login');
+    regForm.classList.toggle('hidden', name === 'login');
+  };
+  tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+
+  // Server messages -> what a person can act on
+  const explain = msg => {
+    if (/valid email|@-sign|period/i.test(msg)) return 'Перевірте адресу пошти — вона має виглядати як name@gmail.com.';
+    if (/at least 8|8 символів/i.test(msg)) return 'Пароль має містити щонайменше 8 символів.';
+    if (/Too Many|Rate limit|exceeded/i.test(msg)) return 'Забагато спроб. Зачекайте хвилину й спробуйте ще раз.';
+    if (/Failed to fetch|NetworkError/i.test(msg)) return 'Сервер не відповідає — можливо, він прокидається. Спробуйте за 30 секунд.';
+    return msg;
+  };
+  const showError = (box, html) => { box.innerHTML = html; box.classList.remove('hidden'); };
+
+  // The browser's own hints are in its UI language and vague; say exactly what is wrong
+  const regEmail = document.getElementById('reg-email');
+  const regPass = document.getElementById('reg-pass');
+  regEmail?.addEventListener('input', () => regEmail.setCustomValidity(
+    regEmail.validity.patternMismatch || regEmail.validity.typeMismatch
+      ? 'Адреса пошти має виглядати як name@gmail.com — з крапкою після @' : ''));
+  regPass?.addEventListener('input', () => regPass.setCustomValidity(
+    regPass.validity.tooShort ? `Пароль закороткий: ${regPass.value.length} з 8 символів` : ''));
 
   loginForm?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -341,15 +571,22 @@ function initAuth() {
     setLoading(btn, true);
     try {
       const data = await req('POST', '/auth/login', {
-        email:    document.getElementById('login-email').value,
+        email:    document.getElementById('login-email').value.trim(),
         password: document.getElementById('login-pass').value,
       });
       auth.setToken(data.access_token);
       auth.setUser(data.user);
       window.location.href = 'dashboard.html';
     } catch (ex) {
-      err.textContent = ex.message;
-      err.classList.remove('hidden');
+      const unknown = /Неправильна пошта|Invalid credentials/.test(ex.message);
+      showError(err, esc(explain(ex.message)) + (unknown
+        ? ' <br>Ще немає акаунта? <a href="#" data-to-register>Зареєструйтесь</a> — це хвилина.' : ''));
+      err.querySelector('[data-to-register]')?.addEventListener('click', ev => {
+        ev.preventDefault();
+        document.getElementById('reg-email').value = document.getElementById('login-email').value;
+        showTab('register');
+        document.getElementById('reg-pass').focus();
+      });
       setLoading(btn, false);
     }
   });
@@ -362,15 +599,21 @@ function initAuth() {
     setLoading(btn, true);
     try {
       const data = await req('POST', '/auth/register', {
-        email:    document.getElementById('reg-email').value,
+        email:    document.getElementById('reg-email').value.trim(),
         password: document.getElementById('reg-pass').value,
       });
       auth.setToken(data.access_token);
       auth.setUser(data.user);
       window.location.href = 'dashboard.html';
     } catch (ex) {
-      err.textContent = ex.message;
-      err.classList.remove('hidden');
+      const exists = /вже існує|already exists/.test(ex.message);
+      showError(err, esc(explain(ex.message)) + (exists ? ' <a href="#" data-to-login>Перейти до входу</a>' : ''));
+      err.querySelector('[data-to-login]')?.addEventListener('click', ev => {
+        ev.preventDefault();
+        document.getElementById('login-email').value = document.getElementById('reg-email').value;
+        showTab('login');
+        document.getElementById('login-pass').focus();
+      });
       setLoading(btn, false);
     }
   });
@@ -412,6 +655,21 @@ async function initDashboard() {
   searchInput?.addEventListener('input', () => renderGrid(searchInput.value));
 
   await loadReports();
+  showProfileHint();
+  document.addEventListener('profile-saved', () => document.getElementById('profile-hint')?.remove());
+}
+
+async function showProfileHint() {
+  const p = await loadProfile();
+  if (p.institution) return;
+  const hint = document.createElement('div');
+  hint.id = 'profile-hint';
+  hint.className = 'profile-hint';
+  hint.innerHTML = `<div><b>Вкажіть свій навчальний заклад один раз</b>
+      <span>Університет, коледж чи школа, група або клас, ПІБ — і вони підставлятимуться в кожен новий звіт.</span></div>
+    <button class="btn btn-primary btn-sm">Заповнити</button>`;
+  hint.querySelector('button').onclick = openProfileModal;
+  document.querySelector('.stats-bar')?.before(hint);
 }
 
 function switchView(view) {
@@ -557,13 +815,20 @@ function renderGrid(query = '') {
 }
 
 /* "New": lab report or essay — they have different title pages and structure */
-function openNewChooser() {
+async function openNewChooser() {
+  const level = (await loadProfile()).level === 'school' ? 'school' : 'university';
   const box = document.createElement('div');
   box.className = 'modal-wrap';
   box.innerHTML = `
     <div class="modal card chooser" role="dialog" aria-modal="true" aria-label="Що створюємо">
       <div class="panel-head"><h2 class="panel-title">Що створюємо?</h2>
         <button class="pv-icon-btn" data-close title="Закрити">${ICONS.x}</button></div>
+      <div class="chooser-level">
+        <div class="seg seg-lg" role="radiogroup" aria-label="Тип закладу">
+          <button type="button" data-level="university" class="${level === 'university' ? 'on' : ''}">Університет / коледж</button>
+          <button type="button" data-level="school" class="${level === 'school' ? 'on' : ''}">Школа, ліцей, гімназія</button>
+        </div>
+      </div>
       <div class="chooser-grid">
         <a class="chooser-card" href="editor.html?kind=lab">
           <span class="chooser-ico">${ICONS.code}</span>
@@ -573,14 +838,26 @@ function openNewChooser() {
         <a class="chooser-card" href="editor.html?kind=essay">
           <span class="chooser-ico">${ICONS.file}</span>
           <b>Реферат</b>
-          <span>За методичкою ФШІ: вступ, розділи з нової сторінки, висновки, перелік посилань. Титулка «РЕФЕРАТ на тему».</span>
+          <span>Вступ, розділи з нової сторінки, висновки, перелік посилань (ДСТУ 3008:2015). Титулка «РЕФЕРАТ на тему».</span>
         </a>
       </div>
       <p class="text-sm text-muted chooser-note">В обох можна писати формули ($x^2$ у тексті або окремим блоком) і перемкнутись у режим LaTeX.</p>
     </div>`;
   const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
   const onKey = e => { if (e.key === 'Escape') close(); };
-  box.addEventListener('click', e => { if (e.target === box || e.target.closest('[data-close]')) close(); });
+  const setLevel = lv => {
+    box.querySelectorAll('[data-level]').forEach(b => b.classList.toggle('on', b.dataset.level === lv));
+    box.querySelectorAll('.chooser-card').forEach(a => {
+      const kind = new URL(a.href).searchParams.get('kind');
+      a.href = `editor.html?kind=${kind}&level=${lv}`;
+    });
+  };
+  box.addEventListener('click', e => {
+    if (e.target === box || e.target.closest('[data-close]')) close();
+    const lv = e.target.closest('[data-level]')?.dataset.level;
+    if (lv) setLevel(lv);
+  });
+  setLevel(level);
   document.addEventListener('keydown', onKey, true);
   document.body.appendChild(box);
   box.querySelector('.chooser-card')?.focus();
@@ -611,6 +888,7 @@ async function downloadDocx(id) {
 ═══════════════════════════════════════════════════════ */
 let reportId     = null;
 let reportKind   = 'lab';                       // 'lab' | 'essay' (реферат)
+let reportLevel  = 'university';                // 'university' (also college) | 'school'
 let editorMode   = 'form';                      // 'form' | 'latex'
 let sections     = [];
 let sse_conc     = null;
@@ -623,13 +901,26 @@ const KIND_TEXT = {
   lab:   { heading: 'Звіт', title: 'Назва роботи', titlePh: 'Лабораторна робота №1. Дослідження алгоритмів сортування',
            hint: 'Титулка, зміст і нумерація складуться автоматично' },
   essay: { heading: 'Реферат', title: 'Тема реферату', titlePh: 'Методи оптимізації нейронних мереж',
-           hint: 'За методичкою ФШІ: кожен розділ з нової сторінки, нумерація в межах розділу' },
+           hint: 'ДСТУ 3008:2015: кожен розділ з нової сторінки, нумерація в межах розділу' },
 };
 
 async function initEditor() {
   auth.guard();
   fillSidebar();
   ensureKatex().then(() => { renderSections(); refreshLive(); }).catch(() => {});
+  // Title pages come from the server's templates; without them the preview shows a stub
+  await loadTemplates().catch(() => toast('Не вдалося завантажити шаблони титулок', 'err'));
+  const list = document.getElementById('institution-list');
+  if (list) list.innerHTML = institutionOptions();
+  document.getElementById('f-institution')?.addEventListener('change', e => {
+    const city = document.getElementById('f-city');
+    if (city && !city.value) { city.value = cityOf(e.target.value) || ''; refreshLive(); }
+  });
+  document.getElementById('level-seg')?.addEventListener('click', e => {
+    const lv = e.target.closest('[data-level]')?.dataset.level;
+    if (lv && lv !== reportLevel) setLevel(lv);
+  });
+  document.getElementById('btn-remember')?.addEventListener('click', rememberProfile);
 
   ['btn-add-sec', 'btn-add-sec-bottom', 'btn-add-sec-side'].forEach(id =>
     document.getElementById(id)?.addEventListener('click', addSection));
@@ -655,7 +946,7 @@ async function initEditor() {
   setGender('student', 'm');
   setGender('teacher', 'f');
 
-  ['f-title', 'f-discipline', 'f-group', 'f-student', 'f-teacher', 'f-goal', 'f-intro', 'f-refs', 'ai-output'].forEach(id =>
+  ['f-title', 'f-discipline', 'f-group', 'f-student', 'f-teacher', 'f-goal', 'f-intro', 'f-refs', 'ai-output', 'f-institution'].forEach(id =>
     document.getElementById(id)?.addEventListener('input', updateReadiness));
   document.getElementById('f-student')?.addEventListener('input', updateStudentSeg);
   // In LaTeX mode the conclusion box writes into \section*{Висновки} of the source
@@ -700,11 +991,49 @@ async function initEditor() {
   if (reportId) {
     await loadReport(reportId);
   } else {
+    // A new report starts from "Мої дані"
+    const p = await loadProfile();
+    const set = (id, value) => { const el = document.getElementById(id); if (el && value) el.value = value; };
+    set('f-institution', p.institution); set('f-city', p.city); set('f-faculty', p.faculty);
+    set('f-department', p.department); set('f-group', p.group); set('f-student', p.student_name);
+    document.getElementById('f-ministry').value = p.ministry ?? DOC_TPL?.ministry_default ?? '';
+    if (p.student_gender) setGender('student', p.student_gender);
+    updateStudentSeg();
+    setLevel(params.get('level') || p.level || 'university', { quiet: true });
     setKind(params.get('kind') === 'essay' ? 'essay' : 'lab');
     setMode('form');
     sections = [];
     renderSections();
   }
+}
+
+function setLevel(level, { quiet = false } = {}) {
+  reportLevel = level === 'school' ? 'school' : 'university';
+  document.body.dataset.level = reportLevel;
+  document.querySelectorAll('#level-seg [data-level]').forEach(b => {
+    b.classList.toggle('on', b.dataset.level === reportLevel);
+    b.setAttribute('aria-checked', b.dataset.level === reportLevel);
+  });
+  const school = reportLevel === 'school';
+  // Same form, school words: Клас, Учень, Вчитель, Предмет
+  document.querySelectorAll('[data-uni][data-school]').forEach(el => { if (!el.matches('button')) el.textContent = school ? el.dataset.school : el.dataset.uni; });
+  document.querySelectorAll('[data-uni-ph]').forEach(el => { el.placeholder = school ? el.dataset.schoolPh : el.dataset.uniPh; });
+  if (!quiet) { setKind(reportKind); }
+}
+
+async function rememberProfile() {
+  const v = id => document.getElementById(id)?.value.trim() ?? '';
+  const btn = document.getElementById('btn-remember');
+  setLoading(btn, true);
+  try {
+    await saveProfile({
+      level: reportLevel, ministry: v('f-ministry'), institution: v('f-institution'), city: v('f-city'),
+      faculty: v('f-faculty'), department: v('f-department'), group: v('f-group'),
+      student_name: v('f-student'), student_gender: genders.student,
+    });
+    toast('Запам’ятали — нові звіти заповнюватимуться цими даними');
+  } catch (ex) { toast(ex.message, 'err'); }
+  finally { setLoading(btn, false); }
 }
 
 function setKind(kind) {
@@ -720,9 +1049,11 @@ function setKind(kind) {
   document.getElementById('f-title').placeholder = t.titlePh;
   document.getElementById('kind-hint').textContent = t.hint;
   document.getElementById('refs-badge').textContent = kind === 'essay' ? 'обов’язковий за методичкою' : 'необов’язково';
-  document.querySelectorAll('.seg[data-gender="teacher"] [data-g]').forEach(b => { b.textContent = b.dataset[kind]; });
+  document.querySelectorAll('.seg[data-gender="teacher"] [data-g]').forEach(b => {
+    b.textContent = reportLevel === 'school' ? b.dataset.school : b.dataset[kind];
+  });
   const date = document.getElementById('f-date');
-  if (kind === 'essay' && date && !date.value) date.value = new Date().toLocaleDateString('uk-UA');
+  if (kind === 'essay' && reportLevel === 'university' && date && !date.value) date.value = new Date().toLocaleDateString('uk-UA');
   if (editorMode === 'latex' && tex.source) parseTexSoon();
   renderSections();
   document.querySelectorAll('.main textarea').forEach(autoGrow);
@@ -756,7 +1087,8 @@ const refsList = () => (document.getElementById('f-refs')?.value || '').split('\
 function currentDoc() {
   const v = id => document.getElementById(id)?.value ?? '';
   return {
-    kind: reportKind,
+    kind: reportKind, level: reportLevel,
+    ministry: v('f-ministry'), institution: v('f-institution'), city: v('f-city'),
     title: v('f-title'), discipline: v('f-discipline'), group: v('f-group'),
     faculty: v('f-faculty'), department: v('f-department'),
     teacher: v('f-teacher'), teacher_gender: genders.teacher, teacher_position: v('f-position'),
@@ -783,6 +1115,7 @@ const LIVE_TARGETS = {
   'f-title': '.dv-title', 'f-discipline': '.dv-title', 'f-group': '.dv-title', 'f-faculty': '.dv-title',
   'f-department': '.dv-title', 'f-student': '.dv-title', 'f-teacher': '.dv-title', 'f-position': '.dv-title',
   'f-date': '.dv-title', 'f-goal': '.dv-body', 'f-intro': '.dv-body',
+  'f-institution': '.dv-title', 'f-city': '.dv-title', 'f-ministry': '.dv-title',
   'ai-output': '[data-bind="doc|conclusion"]', 'f-refs': '[data-bind="doc|bibliography"]',
 };
 
@@ -831,6 +1164,7 @@ async function loadReport(id) {
     set('f-faculty', r.faculty);       set('f-department', r.department);
     set('f-position', r.teacher_position); set('f-date', r.work_date);
     set('f-intro', r.introduction);    set('f-refs', (r.bibliography || []).join('\n'));
+    set('f-institution', r.institution); set('f-city', r.city); set('f-ministry', r.ministry);
     set('ai-output', r.conclusion);
     setGender('student', r.student_gender || 'm');
     setGender('teacher', r.teacher_gender || 'f');
@@ -839,6 +1173,7 @@ async function loadReport(id) {
     sections = toEditableSections(r.sections);
     reportImages = imgs || [];
     setMode(r.editor_mode === 'latex' ? 'latex' : 'form');
+    setLevel(r.level, { quiet: true });
     setKind(r.kind === 'essay' ? 'essay' : 'lab');
     if (editorMode === 'latex') {
       tex.source = r.latex_source || '';
@@ -1243,15 +1578,17 @@ function renderOutline() {
 function updateReadiness() {
   const val = id => document.getElementById(id)?.value.trim();
   const essay = reportKind === 'essay';
+  const school = reportLevel === 'school';
   const texTarget = id => editorMode === 'latex' ? 'tex-src' : id;
   const checks = [
+    ['Навчальний заклад', () => val('f-institution'), 'f-institution'],
     [essay ? 'Тема' : 'Назва роботи', () => val('f-title'), 'f-title'],
-    ['Дисципліна',    () => val('f-discipline'), 'f-discipline'],
-    ['Група',         () => val('f-group'),      'f-group'],
-    ['Студент',       () => val('f-student'),    'f-student'],
-    ['Викладач',      () => val('f-teacher'),    'f-teacher'],
+    [school ? 'Предмет' : 'Дисципліна', () => val('f-discipline'), 'f-discipline'],
+    [school ? 'Клас' : 'Група', () => val('f-group'), 'f-group'],
+    [school ? 'Учень' : 'Студент', () => val('f-student'), 'f-student'],
+    [school ? 'Вчитель' : 'Викладач', () => val('f-teacher'), 'f-teacher'],
     ...(essay ? [
-      ['Факультет і кафедра', () => val('f-faculty') && val('f-department'), 'f-faculty'],
+      ...(school ? [] : [['Факультет і кафедра', () => val('f-faculty') && val('f-department'), 'f-faculty']]),
       ['Вступ', () => val('f-intro'), texTarget('f-intro')],
     ] : [['Мета', () => val('f-goal'), texTarget('f-goal')]]),
     ['Хоча б один розділ з текстом', () => sections.some(s => itemText(s) || s.subsections.some(itemText)), texTarget('btn-add-sec')],
@@ -1622,6 +1959,10 @@ function titlePayload() {
   const v = id => document.getElementById(id)?.value ?? '';
   return {
     kind:             reportKind,
+    level:            reportLevel,
+    ministry:         v('f-ministry'),
+    institution:      v('f-institution'),
+    city:             v('f-city'),
     title:            v('f-title'),
     discipline:       v('f-discipline'),
     teacher:          v('f-teacher'),
@@ -1895,69 +2236,8 @@ function buildDocSheets(doc, images, { editable = false } = {}) {
     : `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}"`;
   const textBlock = (bind, ph, text) =>
     `<div class="dv-text ${hasInlineMath(text) ? 'has-math' : ''}" ${editAttr(bind, ph, 'paras')}>${mathParas(text)}</div>`;
-  const field = (bind, ph, value) => `<span ${editAttr(bind, ph)}>${esc(value)}</span>`;
-  const students = docLines(doc.student_name);
-  const gBtn = (who, m, f) => {
-    const label = doc[`${who}_gender`] === 'f' ? f : m;
-    return editable
-      ? `<button class="dv-gender" data-gender="${who}" data-m="${m}" data-f="${f}" title="Натисніть, щоб змінити форму">${label}</button>`
-      : label;
-  };
-  const year = (doc.work_date || '').trim().slice(-4).match(/^\d{4}$/) ? doc.work_date.trim().slice(-4) : new Date().getFullYear();
   const pagebreak = essay ? '<div class="dv-pagebreak" aria-hidden="true"><span>нова сторінка</span></div>' : '';
-
-  const titlePage = essay ? `
-      <section class="dv-sheet dv-title dv-title-essay">
-        <p>Міністерство освіти і науки України</p>
-        <p>Харківський національний університет радіоелектроніки</p>
-        <p>&nbsp;</p><p>&nbsp;</p>
-        <p class="dv-field"><span class="lbl">Факультет</span><span class="u">${field('doc|faculty', 'факультет', doc.faculty)}</span></p>
-        <p class="dv-field"><span class="lbl">Кафедра</span><span class="u">${field('doc|department', 'кафедра', doc.department)}</span></p>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p class="dv-big">РЕФЕРАТ</p>
-        <p>&nbsp;</p>
-        <p class="dv-field"><span class="lbl">на тему:</span><span class="u">${field('doc|title', 'тема реферату', doc.title)}</span></p>
-        <p class="dv-hint">(тема реферату)</p>
-        <p>&nbsp;</p>
-        <p class="dv-field"><span class="u">${field('doc|discipline', 'дисципліна', doc.discipline)}</span></p>
-        <p class="dv-hint">(дисципліна)</p>
-        <p>&nbsp;</p><p>&nbsp;</p>
-        <div class="dv-field">
-          <span class="lbl">${students.length > 1 ? 'виконали:' : gBtn('student', 'виконав:', 'виконала:')}</span>
-          <span class="u dv-people">${field('doc|work_date', 'дата', doc.work_date)} студент гр. ${field('doc|group', 'група', doc.group)}
-            <span class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. (кожен з нового рядка)', 'paras')}>${mathParas(doc.student_name)}</span></span>
-        </div>
-        <p class="dv-hint">(дата, група, прізвище, ініціали)</p>
-        <p>&nbsp;</p>
-        <p class="dv-field"><span class="lbl">${gBtn('teacher', 'перевірив', 'перевірила')}</span>
-          <span class="u">${field('doc|teacher_position', 'посада', doc.teacher_position)} ${field('doc|teacher', 'Прізвище І. Б.', doc.teacher)}</span></p>
-        <p class="dv-hint">(посада, прізвище, ініціали)</p>
-        <div class="dv-push"></div>
-        <p>Харків ${year} р.</p>
-      </section>` : `
-      <section class="dv-sheet dv-title">
-        <p>Міністерство освіти і науки України</p>
-        <p>Харківський національний університет радіоелектроніки</p>
-        <p>&nbsp;</p>
-        <p>Кафедра ${field('doc|department', 'штучного інтелекту', doc.department)}</p>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p>Дисципліна «${field('doc|discipline', 'Назва дисципліни', doc.discipline)}»</p>
-        <p>${field('doc|title', 'Назва роботи', doc.title)}</p>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <div class="dv-sign">
-          <div>
-            <p>${students.length > 1 ? 'Виконали:' : gBtn('student', 'Виконав:', 'Виконала:')}</p>
-            <p>ст. гр. ${field('doc|group', 'група', doc.group)}</p>
-            <div class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. студента', 'paras')}>${mathParas(doc.student_name)}</div>
-          </div>
-          <div>
-            <p>${gBtn('teacher', 'Прийняв:', 'Прийняла:')}</p>
-            <p>${field('doc|teacher', 'Прізвище І. Б. викладача', doc.teacher)}</p>
-          </div>
-        </div>
-        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p>Харків – ${new Date().getFullYear()}</p>
-      </section>`;
+  const titlePage = titlePageHtml(doc, editAttr, editable);
 
   // Numbering as in report_outline.py: formulas always (section.n); listings / figures
   // through the document in a lab report, within the section in an essay
@@ -2145,6 +2425,7 @@ async function openPreview(id, title, opts = {}) {
         teacher: doc.teacher, teacher_gender: doc.teacher_gender, teacher_position: doc.teacher_position,
         student_name: doc.student_name, student_gender: doc.student_gender, work_date: doc.work_date,
         faculty: doc.faculty, department: doc.department,
+        ministry: doc.ministry, institution: doc.institution, city: doc.city,
         goal: doc.goal, introduction: doc.introduction, conclusion: doc.conclusion,
         bibliography: doc.bibliography, sections: sectionsPayload(doc.sections),
       });
@@ -2218,6 +2499,7 @@ async function openPreview(id, title, opts = {}) {
     $('[data-mode="edit"]').innerHTML = `${ICONS.eye} Документ`;
   }
   ensureKatex().then(() => { if (!closed) render(); }).catch(() => {});
+  await loadTemplates().catch(() => {});
 
   /* ── downloads always reflect the latest edits ── */
   root.querySelectorAll('[data-dl]').forEach(b => b.onclick = async () => {
@@ -2410,8 +2692,8 @@ async function openPreview(id, title, opts = {}) {
     if (g) {
       const key = `${g.dataset.gender}_gender`;
       doc[key] = doc[key] === 'f' ? 'm' : 'f';
-      g.textContent = doc[key] === 'f' ? g.dataset.f : g.dataset.m;
       touch();
+      render();          // one gender changes several words (Виконала, учениця)
       return;
     }
     const btn = e.target.closest('[data-act]');

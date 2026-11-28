@@ -4,7 +4,7 @@ sections, listings, figures and formulas identically (ДСТУ 3008:2015):
 ПЕРЕЛІК ПОСИЛАНЬ stay unnumbered.
 
 Lab report: listings and figures are numbered through the whole document (1, 2, 3).
-Essay (реферат, методичка ФШІ): everything is numbered within its section (2.1, 2.2),
+Essay (реферат): everything is numbered within its section (2.1, 2.2),
 every section starts on a new page and a blank line separates a heading from the text."""
 import os
 from dataclasses import dataclass, field
@@ -57,40 +57,6 @@ class References:
 
 def is_essay(report) -> bool:
     return getattr(report, "kind", "lab") == "essay"
-
-
-def student_lines(report, student_name=""):
-    text = (getattr(report, "student_name", "") or student_name or "")
-    return [line.strip() for line in text.replace("\r\n", "\n").split("\n") if line.strip()]
-
-
-def signature_rows(report, student_name=""):
-    """Rows of the "Виконав / Прийняв" block on the lab title page, with verb forms by gender."""
-    students = student_lines(report, student_name)
-    if len(students) > 1:
-        did = "Виконали:"
-    else:
-        did = "Виконала:" if getattr(report, "student_gender", "m") == "f" else "Виконав:"
-    took = "Прийняв:" if getattr(report, "teacher_gender", "f") == "m" else "Прийняла:"
-    rows = [(did, took), (f"ст. гр. {report.group}", report.teacher)]
-    rows += [(name, "") for name in students] or [("", "")]
-    return rows
-
-
-def essay_people(report, student_name=""):
-    """Essay title page (методичка): ("виконав:", ["13.10.2025  студент гр. ІТШІ-23-1  Іваненко І. І."]),
-    ("перевірив", "ас. каф. ШІ Гриньов С. А.")."""
-    students = student_lines(report, student_name) or [""]
-    if len(students) > 1:
-        did = "виконали:"
-    else:
-        did = "виконала:" if getattr(report, "student_gender", "m") == "f" else "виконав:"
-    date = (getattr(report, "work_date", "") or "").strip()
-    group = (report.group or "").strip()
-    lines = ["   ".join(p for p in (date, f"студент гр. {group}" if group else "", name) if p) for name in students]
-    checked = "перевірив" if getattr(report, "teacher_gender", "f") == "m" else "перевірила"
-    teacher = " ".join(p for p in ((getattr(report, "teacher_position", "") or "").strip(), (report.teacher or "").strip()) if p)
-    return did, lines, checked, teacher
 
 
 def text_lines(text):

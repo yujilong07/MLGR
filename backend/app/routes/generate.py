@@ -50,7 +50,7 @@ async def stream_conclusion_endpoint(
 
     images = session.exec(select(ReportImage).where(ReportImage.report_id == id)).all()
     snapshot = SimpleNamespace(
-        kind=report.kind, title=report.title, discipline=report.discipline, goal=report.goal,
+        kind=report.kind, level=report.level, title=report.title, discipline=report.discipline, goal=report.goal,
         introduction=report.introduction, sections=report.sections,
         images=[img for img in images if img.section_path != "u"],
     )
@@ -133,7 +133,7 @@ async def generate_introduction_endpoint(
     if report.kind == "essay":
         # The intro of an essay is written from the topic and what the sections cover
         essay_context = build_report_context(SimpleNamespace(
-            kind="essay", title=report.title, discipline=report.discipline, goal="",
+            kind="essay", level=report.level, title=report.title, discipline=report.discipline, goal="",
             introduction=None, sections=report.sections, images=[],
         ), limit=6000)
     source = essay_context or report.goal or ""
