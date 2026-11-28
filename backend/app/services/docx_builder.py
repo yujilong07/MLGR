@@ -2,6 +2,7 @@ from docx import Document
 from docx.image.image import Image
 from docx.shared import Pt, Cm, Mm, Inches, RGBColor
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -9,7 +10,12 @@ from datetime import datetime
 import math
 import os
 
-from app.services.report_outline import Figure, Heading, Listing, Text, iter_report_blocks, signature_rows, text_lines
+from app.services.content import split_inline
+from app.services.math_render import FormulaError, latex_to_omml
+from app.services.report_outline import (
+    Figure, Formula, Heading, Listing, References, Text,
+    essay_people, is_essay, iter_report_blocks, signature_rows, text_lines,
+)
 
 # A4, margins 30/20/20/20 mm (ДСТУ 3008:2015)
 TEXT_WIDTH = Mm(160)
@@ -59,6 +65,11 @@ class PageEstimator:
 
     def image(self, height_emu):
         self.add(height_emu / 12700 + LINE_PT, keep_together=True)
+
+    def new_page(self):
+        if self.used > 0:
+            self.page += 1
+            self.used = 0.0
 
 
 _lines = text_lines
@@ -223,7 +234,7 @@ def add_title_page(document, report, student_name=""):
     _centered(document, "Міністерство освіти і науки України")
     _centered(document, "Харківський національний університет радіоелектроніки")
     _centered(document, "")
-    _centered(document, "Кафедра штучного інтелекту")
+    _centered(document, f"Кафедра {(getattr(report, 'department', '') or 'штучного інтелекту').strip()}")
 
     for _ in range(4):
         _centered(document, "")
@@ -235,10 +246,10 @@ def add_title_page(document, report, student_name=""):
         _centered(document, "")
 
     # Виконав / Прийняла side-by-side with borderless table
-    table = document.add_table(rows=3, cols=2)
+    rows_data = signature_rows(report, student_name)
+    table = document.add_table(rows=len(rows_data), cols=2)
     _remove_table_borders(table)
 
-    rows_data = signature_rows(report, student_name)
     for row_idx, (left, right) in enumerate(rows_data):
         for col_idx, text in enumerate((left, right)):
             cell = table.cell(row_idx, col_idx)
@@ -249,7 +260,7 @@ def add_title_page(document, report, student_name=""):
             run = para.add_run(text)
             set_font(run)
 
-    for _ in range(5):
+    for _ in range(max(2, 6 - len(rows_data))):
         _centered(document, "")
 
     _centered(document, f"Харків – {year}")
@@ -257,13 +268,99 @@ def add_title_page(document, report, student_name=""):
     document.add_page_break()
 
 
-def add_table_of_contents(document):
+def _year(report):
+    """Year from the essay date ("13.10.2025"), else the current one."""
+    digits = (getattr(report, "work_date", "") or "").strip()[-4:]
+    return digits if digits.isdigit() else str(datetime.now().year)
+
+
+def _hint(document, text):
+    """Small caption under a title page field: "(тема реферату)"."""
+    p = _centered(document, text, size=10)
+    p.paragraph_format.line_spacing = 1.0
+    return p
+
+
+def _field_line(document, label, value):
+    """«label ______value______» — the value underlined to the right margin, as in the
+    методичка template (underlined tabs make the line)."""
+    p = document.add_paragraph()
+    p.paragraph_format.first_line_indent = Cm(0)
+    p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    stops = p.paragraph_format.tab_stops
+    stops.add_tab_stop(Mm(92) if label else Mm(80), WD_TAB_ALIGNMENT.CENTER)
+    stops.add_tab_stop(TEXT_WIDTH, WD_TAB_ALIGNMENT.RIGHT)
+    if label:
+        set_font(p.add_run(f"{label} "))
+    for text in ("\t", value or "", "\t"):
+        run = p.add_run(text)
+        set_font(run)
+        run.underline = True
+    return p
+
+
+def add_title_page_essay(document, report, student_name=""):
+    """Title page of a реферат (template ФШІ ІТШ)."""
+    _centered(document, "Міністерство освіти і науки України")
+    _centered(document, "Харківський національний університет радіоелектроніки")
+    for _ in range(2):
+        _centered(document, "")
+    _field_line(document, "Факультет", (getattr(report, "faculty", "") or "").strip())
+    _field_line(document, "Кафедра", (getattr(report, "department", "") or "").strip())
+    for _ in range(3):
+        _centered(document, "")
+    _centered(document, "РЕФЕРАТ", bold=True, size=16)
+    _centered(document, "")
+    _field_line(document, "на тему:", report.title)
+    _hint(document, "(тема реферату)")
+    _centered(document, "")
+    _field_line(document, "", report.discipline)
+    _hint(document, "(дисципліна)")
+    for _ in range(2):
+        _centered(document, "")
+
+    did, lines, checked, teacher = essay_people(report, student_name)
+    for k, line in enumerate(lines):
+        _field_line(document, did if k == 0 else " " * len(did), line)
+        _hint(document, "(дата, група, прізвище, ініціали)")
+    _centered(document, "")
+    _field_line(document, checked, teacher)
+    _hint(document, "(посада, прізвище, ініціали)")
+
+    # Push "Харків 2025 р." to the bottom of the page
+    for _ in range(max(1, 6 - 2 * len(lines))):
+        _centered(document, "")
+    _centered(document, f"Харків {_year(report)} р.")
+    document.add_page_break()
+
+
+def add_table_of_contents(document, page_break=True):
     """Adds the ЗМІСТ title and returns a placeholder paragraph; entries are filled in by
     fill_table_of_contents() once the body is built and heading pages are known."""
     _centered(document, "ЗМІСТ", bold=True)
     placeholder = document.add_paragraph()
-    document.add_page_break()
+    if page_break:
+        document.add_page_break()
     return placeholder
+
+
+def start_numbered_section(document):
+    """Essay: the title page and ЗМІСТ are counted but not numbered — numbers start
+    with ВСТУП. A new section without the page number field before it does that."""
+    first = document.sections[0]
+    for p in first.header.paragraphs:
+        for r in list(p._p):
+            if r.tag == qn('w:r'):
+                p._p.remove(r)
+    first.different_first_page_header_footer = False
+    body = document.add_section(WD_SECTION.NEW_PAGE)
+    body.header.is_linked_to_previous = False
+    body.different_first_page_header_footer = False
+    paragraph = body.header.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    paragraph.paragraph_format.first_line_indent = Cm(0)
+    paragraph.paragraph_format.line_spacing = 1.0
+    _add_field(paragraph, 'PAGE', '3')
 
 
 def fill_table_of_contents(placeholder, headings):
@@ -311,11 +408,14 @@ def fill_table_of_contents(placeholder, headings):
     placeholder._p.getparent().remove(placeholder._p)
 
 
-def add_heading(document, text, level=1, bookmark=None):
+def add_heading(document, text, level=1, bookmark=None, new_page=False, space_after=False):
     """Use Word built-in heading styles so the TOC field picks them up."""
     paragraph = document.add_paragraph(style=f'Heading {level}')
     paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(0)
+    # Essay: "між заголовком і текстом має бути пустий рядок"
+    paragraph.paragraph_format.space_after = Pt(LINE_PT) if space_after else Pt(0)
+    paragraph.paragraph_format.page_break_before = new_page
+    paragraph.paragraph_format.keep_with_next = True
 
     if level == 1:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -340,13 +440,52 @@ def add_heading(document, text, level=1, bookmark=None):
     return paragraph
 
 
+def _append_math(paragraph, latex):
+    """Inline Word equation; a formula that cannot be converted is kept as LaTeX text."""
+    try:
+        paragraph._p.append(latex_to_omml(latex))
+    except FormulaError:
+        run = paragraph.add_run(latex)
+        set_font(run, name='Cambria Math')
+        run.italic = True
+
+
 def add_paragraph_text(document, text):
     """Each non-empty line becomes its own paragraph: manual line breaks inside a
-    justified paragraph make Word stretch the line across the full width."""
+    justified paragraph make Word stretch the line across the full width.
+    $...$ inside a line becomes an inline Word equation."""
     paragraph = None
     for line in _lines(text):
         paragraph = document.add_paragraph()
-        set_font(paragraph.add_run(line))
+        for kind, value in split_inline(line):
+            if kind == "math":
+                _append_math(paragraph, value)
+            elif value:
+                set_font(paragraph.add_run(value))
+    return paragraph
+
+
+def add_formula(document, latex, number, spaced=True):
+    """Display formula: centred, its number "(2.1)" at the right margin (методичка)."""
+    p = document.add_paragraph()
+    fmt = p.paragraph_format
+    fmt.first_line_indent = Cm(0)
+    fmt.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    fmt.space_before = Pt(LINE_PT) if spaced else Pt(6)
+    fmt.space_after = Pt(LINE_PT) if spaced else Pt(6)
+    fmt.tab_stops.add_tab_stop(Mm(80), WD_TAB_ALIGNMENT.CENTER)
+    fmt.tab_stops.add_tab_stop(TEXT_WIDTH, WD_TAB_ALIGNMENT.RIGHT)
+    set_font(p.add_run("\t"))
+    _append_math(p, latex)
+    set_font(p.add_run(f"\t({number})"))
+    return p
+
+
+def add_references(document, items):
+    paragraph = None
+    for n, item in enumerate(items, start=1):
+        paragraph = document.add_paragraph()
+        set_font(paragraph.add_run(f"{n}. {item}"))
     return paragraph
 
 def add_listing(document, code, listing_number, title):
@@ -380,8 +519,10 @@ def image_height(image_path):
     return size.get('height') or int(IMAGE_WIDTH * img.px_height / img.px_width)
 
 
-def add_image(document, image_path, image_number, caption_text):
+def add_image(document, image_path, image_number, caption_text, spaced=False):
     img_paragraph = document.add_paragraph()
+    if spaced:  # essay: blank line before the figure and after its caption
+        img_paragraph.paragraph_format.space_before = Pt(LINE_PT)
     img_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     img_paragraph.paragraph_format.first_line_indent = Cm(0)
     img_paragraph.paragraph_format.line_spacing = 1.0
@@ -394,6 +535,8 @@ def add_image(document, image_path, image_number, caption_text):
     caption.paragraph_format.first_line_indent = Cm(0)
     caption_run = caption.add_run(f"Рисунок {image_number} – {caption_text}")
     set_font(caption_run)
+    if spaced:
+        caption.paragraph_format.space_after = Pt(LINE_PT)
     return caption
 
 def apply_toc_pages(docx_path, pages):
@@ -424,21 +567,32 @@ def apply_toc_pages(docx_path, pages):
 
 
 def build_report_docx(report, images=None, student_name=""):
+    essay = is_essay(report)
     document = create_base_doc()
-    add_title_page(document, report, student_name)
-    toc_placeholder = add_table_of_contents(document)
+    if essay:
+        add_title_page_essay(document, report, student_name)
+        toc_placeholder = add_table_of_contents(document, page_break=False)
+        start_numbered_section(document)
+    else:
+        add_title_page(document, report, student_name)
+        toc_placeholder = add_table_of_contents(document)
 
     # Body starts after the title page and the TOC page(s)
-    toc_lines = 3 + sum(1 + len(sec.get('subsections') or []) for sec in report.sections or [])
+    toc_lines = 4 + sum(1 + len(sec.get('subsections') or []) for sec in report.sections or [])
     toc_pages = math.ceil(toc_lines * LINE_PT / TEXT_HEIGHT_PT)
     pages = PageEstimator(start_page=2 + toc_pages)
     toc_headings = []
 
     for block in iter_report_blocks(report, images):
         if isinstance(block, Heading):
+            if block.new_page:
+                pages.new_page()
             pages.heading()
+            if block.space_after:
+                pages.add(LINE_PT)
             toc_headings.append((block.toc_text, block.level, block.bookmark, pages.page))
-            add_heading(document, block.text, level=block.level, bookmark=block.bookmark)
+            add_heading(document, block.text, level=block.level, bookmark=block.bookmark,
+                        new_page=block.new_page, space_after=block.space_after)
         elif isinstance(block, Text):
             add_paragraph_text(document, block.text)
             pages.text(block.text)
@@ -446,8 +600,14 @@ def build_report_docx(report, images=None, student_name=""):
             add_listing(document, block.code, block.number, block.title)
             pages.code(block.code)
         elif isinstance(block, Figure):
-            add_image(document, block.path, block.number, block.caption)
+            add_image(document, block.path, block.number, block.caption, spaced=essay)
             pages.image(image_height(block.path))
+        elif isinstance(block, Formula):
+            add_formula(document, block.latex, block.number, spaced=essay)
+            pages.add(3 * LINE_PT if essay else 2 * LINE_PT, keep_together=True)
+        elif isinstance(block, References):
+            add_references(document, block.items)
+            pages.text("\n".join(block.items))
 
     fill_table_of_contents(toc_placeholder, toc_headings)
 

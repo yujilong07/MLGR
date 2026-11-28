@@ -50,8 +50,9 @@ async def stream_conclusion_endpoint(
 
     images = session.exec(select(ReportImage).where(ReportImage.report_id == id)).all()
     snapshot = SimpleNamespace(
-        title=report.title, discipline=report.discipline, goal=report.goal,
-        sections=report.sections, images=images,
+        kind=report.kind, title=report.title, discipline=report.discipline, goal=report.goal,
+        introduction=report.introduction, sections=report.sections,
+        images=[img for img in images if img.section_path != "u"],
     )
     full_context = build_report_context(snapshot, limit=None)
     # Any change to the report, the prompt or the model gives a new conclusion
@@ -128,13 +129,21 @@ async def generate_introduction_endpoint(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    cache_key = "introduction:" + hashlib.md5(report.goal.encode()).hexdigest()
+    essay_context = None
+    if report.kind == "essay":
+        # The intro of an essay is written from the topic and what the sections cover
+        essay_context = build_report_context(SimpleNamespace(
+            kind="essay", title=report.title, discipline=report.discipline, goal="",
+            introduction=None, sections=report.sections, images=[],
+        ), limit=6000)
+    source = essay_context or report.goal or ""
+    cache_key = "introduction:" + hashlib.md5(f"{report.kind}|{source}".encode()).hexdigest()
     cached = get_cached(cache_key)
     if cached:
         return {"introduction": cached}
 
     loop = asyncio.get_event_loop()
-    text = await loop.run_in_executor(None, lambda: generate_introduction(report.goal))
+    text = await loop.run_in_executor(None, lambda: generate_introduction(report.goal, essay_context))
     set_cached(cache_key, text, ttl=86400)
     return {"introduction": text}
 

@@ -93,6 +93,9 @@ const ICONS = {
   redo:     '<svg class="icon" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>',
   code:     '<svg class="icon" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg>',
   edit:     '<svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  sigma:    '<svg class="icon" viewBox="0 0 24 24"><path d="M18 5H6l6 7-6 7h12"/></svg>',
+  text:     '<svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  python:   '<svg class="icon" viewBox="0 0 24 24"><path d="M12 3c-3.5 0-4 1.5-4 3v2h4.5v1H6c-2 0-3 1.5-3 4s1 4 3 4h2v-2.5c0-1.4 1.1-2.5 2.5-2.5h4c1.4 0 2.5-1.1 2.5-2.5V6c0-1.5-1.5-3-5-3z"/><path d="M12 21c3.5 0 4-1.5 4-3v-2h-4.5v-1H18c2 0 3-1.5 3-4"/></svg>',
   eye:      '<svg class="icon" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 const sortImages = list => [...list].sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.id - b.id);
@@ -100,6 +103,194 @@ const imagesIn = (images, path) => sortImages(images.filter(im => im.section_pat
 // document order: by section ("0" < "0.1" < "1"), then by position inside a section
 const docOrder = images => sortImages(images).sort((a, b) => a.section_path.localeCompare(b.section_path, undefined, { numeric: true }));
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* ═══════════════════════════════════════════════════════
+   FORMULAS  (KaTeX in the browser; the server makes Word
+   equations / SVG from the same LaTeX)
+═══════════════════════════════════════════════════════ */
+const KATEX_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11';
+let katexPromise = null;
+
+function ensureKatex() {
+  if (window.katex) return Promise.resolve(window.katex);
+  katexPromise ??= new Promise((resolve, reject) => {
+    document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: `${KATEX_BASE}/katex.min.css` }));
+    const s = Object.assign(document.createElement('script'), { src: `${KATEX_BASE}/katex.min.js`, async: true });
+    s.onload = () => resolve(window.katex);
+    s.onerror = () => { katexPromise = null; reject(new Error('KaTeX не завантажився')); };
+    document.head.appendChild(s);
+  });
+  return katexPromise;
+}
+
+// HTML for one formula; before KaTeX has loaded (or offline) the LaTeX source is shown
+function mathHtml(latex, display = false) {
+  if (!latex?.trim()) return '';
+  if (!window.katex) return `<code class="math-src">${esc(latex)}</code>`;
+  return window.katex.renderToString(latex, { displayMode: display, throwOnError: false, strict: 'ignore', output: 'html' });
+}
+
+// "$x$" in text: the same rule as the server (\$ is a literal dollar)
+const INLINE_MATH = /(?<!\\)\$(.+?)(?<!\\)\$/g;
+const hasInlineMath = text => /(?<!\\)\$(.+?)(?<!\\)\$/.test(text || '');
+const unescapeDollar = s => s.replace(/\\\$/g, '$');
+
+// One line of text with its inline formulas rendered
+function inlineHtml(line) {
+  let out = '', pos = 0;
+  for (const m of String(line).matchAll(INLINE_MATH)) {
+    out += esc(unescapeDollar(line.slice(pos, m.index))) + mathHtml(m[1].trim());
+    pos = m.index + m[0].length;
+  }
+  return out + esc(unescapeDollar(line.slice(pos)));
+}
+
+/* ── content model: a section is an ordered list of blocks ── */
+// {type: 'text', text} | {type: 'code', code, language} | {type: 'formula', latex}
+function itemBlocks(item) {
+  if (Array.isArray(item?.blocks)) return item.blocks.filter(b => ['text', 'code', 'formula'].includes(b?.type));
+  const out = [];
+  if (item?.text?.trim()) out.push({ type: 'text', text: item.text });
+  if (item?.code?.trim()) out.push({ type: 'code', code: item.code, language: item.language || 'python' });
+  return out;
+}
+
+const newTextBlock    = () => ({ type: 'text', text: '' });
+const newCodeBlock    = () => ({ type: 'code', code: '', language: 'python' });
+const newFormulaBlock = () => ({ type: 'formula', latex: '' });
+const newItem = withSubs => ({ title: '', blocks: [newTextBlock()], ...(withSubs ? { subsections: [] } : {}) });
+
+function toEditableSections(raw) {
+  const item = s => {
+    const blocks = itemBlocks(s).map(b => ({ ...b }));
+    return { title: s.title || '', blocks: blocks.length ? blocks : [newTextBlock()] };
+  };
+  return (raw || []).map(s => ({ ...item(s), subsections: (s.subsections || []).map(item) }));
+}
+
+function sectionsPayload(list) {
+  const blocks = item => item.blocks
+    .map(b => b.type === 'text' ? { type: 'text', text: b.text || '' }
+      : b.type === 'code' ? { type: 'code', code: b.code || '', language: b.language || 'python' }
+      : { type: 'formula', latex: b.latex || '' })
+    .filter(b => !(b.type === 'text' && !b.text.trim()));
+  return list.map(s => ({
+    title: s.title, blocks: blocks(s),
+    subsections: (s.subsections || []).map(b => ({ title: b.title, blocks: blocks(b) })),
+  }));
+}
+
+const blockFilled = b => Boolean((b.type === 'text' ? b.text : b.type === 'code' ? b.code : b.latex)?.trim());
+const itemText = item => (item.blocks || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+const hasContent = item => Boolean(item.title?.trim() || item.blocks?.some(blockFilled) || item.subsections?.length);
+
+/* ── LaTeX source helpers (mirror of backend latex_doc.escape_text) ── */
+const TEX_ESC = {
+  '\\': '\\textbackslash{}', '&': '\\&', '%': '\\%', '#': '\\#', '_': '\\_',
+  '{': '\\{', '}': '\\}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '$': '\\$',
+};
+const texEscape = text => String(text).replace(/[\\&%#_{}~^$]/g, ch => TEX_ESC[ch]);
+
+function inlineToLatex(line) {
+  let out = '', pos = 0;
+  for (const m of String(line).matchAll(INLINE_MATH)) {
+    out += texEscape(unescapeDollar(line.slice(pos, m.index))) + `$${m[1]}$`;
+    pos = m.index + m[0].length;
+  }
+  return out + texEscape(unescapeDollar(line.slice(pos)));
+}
+const textToLatexParas = text => String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map(inlineToLatex).join('\n\n');
+
+// Replaces the body of \section*{<one of names>} up to the next \section / bibliography / end;
+// adds the section when it is missing
+function latexReplaceSection(src, names, body, { atStart = false } = {}) {
+  const re = new RegExp(`\\\\section\\*\\s*\\{\\s*(${names.join('|')})\\s*\\}`, 'i');
+  const m = re.exec(src);
+  if (!m) {
+    const block = `\\section*{${names[0]}}\n\n${body}\n\n`;
+    if (atStart) return block + src;
+    const tail = src.search(/\\begin\{thebibliography\}|\\end\{document\}/);
+    return tail === -1 ? `${src.trimEnd()}\n\n${block}` : src.slice(0, tail) + block + src.slice(tail);
+  }
+  const start = m.index + m[0].length;
+  const next = src.slice(start).search(/\\section\*?\s*\{|\\begin\{thebibliography\}|\\end\{document\}/);
+  const end = next === -1 ? src.length : start + next;
+  return `${src.slice(0, start)}\n\n${body}\n\n${src.slice(end).replace(/^\s+/, '')}`;
+}
+
+// Snippets for the formula toolbar: [label, latex, cursor offset from the end]
+const MATH_SNIPPETS = [
+  ['a/b', '\\frac{}{}', 3], ['√', '\\sqrt{}', 1], ['xⁿ', '^{}', 1], ['xᵢ', '_{}', 1],
+  ['Σ', '\\sum_{i=1}^{n} ', 0], ['∫', '\\int_{a}^{b} ', 0], ['lim', '\\lim_{x \\to 0} ', 0],
+  ['α', '\\alpha ', 0], ['β', '\\beta ', 0], ['σ', '\\sigma ', 0], ['θ', '\\theta ', 0], ['λ', '\\lambda ', 0],
+  ['≤', '\\le ', 0], ['≥', '\\ge ', 0], ['≠', '\\ne ', 0], ['·', '\\cdot ', 0], ['∞', '\\infty ', 0],
+  ['x̂', '\\hat{}', 1], ['x̄', '\\bar{}', 1], ['ℝ', '\\mathbb{R}', 0],
+];
+
+function insertAtCursor(el, text, back = 0) {
+  el.focus();
+  const { selectionStart: a, selectionEnd: b, value } = el;
+  el.value = value.slice(0, a) + text + value.slice(b);
+  const pos = a + text.length - back;
+  el.setSelectionRange(pos, pos);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/* Python -> LaTeX (latexify on the server; the code is parsed, never run) */
+function openPyDialog(onInsert) {
+  const box = document.createElement('div');
+  box.className = 'modal-wrap';
+  box.innerHTML = `
+    <div class="modal card" role="dialog" aria-modal="true" aria-label="Формула з Python">
+      <div class="panel-head"><h2 class="panel-title">Формула з Python-коду</h2>
+        <button class="pv-icon-btn" data-close title="Закрити">${ICONS.x}</button></div>
+      <div class="panel-body">
+        <p class="text-sm text-muted">Вставте функцію, вираз або присвоєння — бібліотека
+          <a href="https://github.com/google/latexify_py" target="_blank" rel="noopener">latexify</a> перетворить їх на формулу.
+          Код не виконується.</p>
+        <div class="code-wrap"><textarea class="py-src" spellcheck="false" rows="5"
+          placeholder="def sigmoid(x):&#10;    return 1 / (1 + math.exp(-x))"></textarea></div>
+        <div class="py-result"></div>
+        <div class="flex gap-8" style="justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" data-close>Скасувати</button>
+          <button class="btn btn-secondary btn-sm" data-convert>Перетворити</button>
+          <button class="btn btn-primary btn-sm" data-insert disabled>Вставити</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  const src = box.querySelector('.py-src'), result = box.querySelector('.py-result');
+  const insertBtn = box.querySelector('[data-insert]');
+  let latex = '';
+  const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
+  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const convert = async () => {
+    const btn = box.querySelector('[data-convert]');
+    setLoading(btn, true);
+    try {
+      const r = await req('POST', '/latex/from-python', { source: src.value });
+      latex = r.latex;
+      result.innerHTML = `<div class="py-math">${mathHtml(latex, true)}</div><code class="math-src">${esc(latex)}</code>`
+        + (r.error ? `<p class="text-sm warn-text">У Word/PDF формула може відобразитись неточно: ${esc(r.error)}</p>` : '');
+      insertBtn.disabled = false;
+    } catch (ex) {
+      latex = '';
+      result.innerHTML = `<div class="error-box">${esc(ex.message)}</div>`;
+      insertBtn.disabled = true;
+    } finally { setLoading(btn, false); }
+  };
+  box.addEventListener('click', e => {
+    if (e.target === box || e.target.closest('[data-close]')) close();
+    if (e.target.closest('[data-convert]')) convert();
+    if (e.target.closest('[data-insert]') && latex) { onInsert(latex); close(); }
+  });
+  src.addEventListener('keydown', e => {
+    if (e.key === 'Tab') { e.preventDefault(); insertAtCursor(src, '    '); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) convert();
+  });
+  document.addEventListener('keydown', onKey, true);
+  src.focus();
+}
 
 function setLoading(btn, on) {
   if (on) { btn._html = btn.innerHTML; btn.innerHTML = '<span class="spinner"></span>'; btn.disabled = true; }
@@ -196,7 +387,10 @@ async function initDashboard() {
   auth.guard();
   fillSidebar();
 
-  document.getElementById('btn-new')?.addEventListener('click', () => { window.location.href = 'editor.html'; });
+  ['btn-new', 'nav-new'].forEach(id => document.getElementById(id)?.addEventListener('click', e => {
+    e.preventDefault();
+    openNewChooser();
+  }));
 
   document.getElementById('nav-reports')?.addEventListener('click', e => {
     e.preventDefault();
@@ -337,6 +531,7 @@ function renderGrid(query = '') {
       <div class="rc-icon">${ICONS.file}</div>
       <div class="rc-title">${esc(r.title || 'Без назви')}</div>
       <div class="rc-meta">
+        ${r.kind === 'essay' ? '<span class="badge badge-kind">Реферат</span>' : ''}
         <span class="badge">${esc(r.discipline || 'Без дисципліни')}</span>
         ${r.group   ? `<span>${esc(r.group)}</span>` : ''}
         ${r.teacher ? `<span class="dot-sep">${esc(r.teacher)}</span>` : ''}
@@ -359,6 +554,36 @@ function renderGrid(query = '') {
       if (action === 'view') openPreview(id, allReports.find(r => r.id === id)?.title, { onClose: changed => changed && loadReports() });
     });
   });
+}
+
+/* "New": lab report or essay — they have different title pages and structure */
+function openNewChooser() {
+  const box = document.createElement('div');
+  box.className = 'modal-wrap';
+  box.innerHTML = `
+    <div class="modal card chooser" role="dialog" aria-modal="true" aria-label="Що створюємо">
+      <div class="panel-head"><h2 class="panel-title">Що створюємо?</h2>
+        <button class="pv-icon-btn" data-close title="Закрити">${ICONS.x}</button></div>
+      <div class="chooser-grid">
+        <a class="chooser-card" href="editor.html?kind=lab">
+          <span class="chooser-ico">${ICONS.code}</span>
+          <b>Лабораторна / практична</b>
+          <span>Мета роботи, хід роботи з кодом і скріншотами, висновки. Титулка «Виконав / Прийняла».</span>
+        </a>
+        <a class="chooser-card" href="editor.html?kind=essay">
+          <span class="chooser-ico">${ICONS.file}</span>
+          <b>Реферат</b>
+          <span>За методичкою ФШІ: вступ, розділи з нової сторінки, висновки, перелік посилань. Титулка «РЕФЕРАТ на тему».</span>
+        </a>
+      </div>
+      <p class="text-sm text-muted chooser-note">В обох можна писати формули ($x^2$ у тексті або окремим блоком) і перемкнутись у режим LaTeX.</p>
+    </div>`;
+  const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  box.addEventListener('click', e => { if (e.target === box || e.target.closest('[data-close]')) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(box);
+  box.querySelector('.chooser-card')?.focus();
 }
 
 async function deleteReport(id) {
@@ -385,14 +610,26 @@ async function downloadDocx(id) {
    PAGE: EDITOR  (editor.html)
 ═══════════════════════════════════════════════════════ */
 let reportId     = null;
+let reportKind   = 'lab';                       // 'lab' | 'essay' (реферат)
+let editorMode   = 'form';                      // 'form' | 'latex'
 let sections     = [];
 let sse_conc     = null;
-let reportImages = [];                          // [{id, url, caption, section_path}]
+let reportImages = [];                          // [{id, url, caption, section_path, position}]
 const genders    = { student: 'm', teacher: 'f' };
+// LaTeX mode: the source is kept as typed; the server parses it into the same structure
+const tex = { source: '', warnings: [], timer: null, saveTimer: null, dirty: false };
+
+const KIND_TEXT = {
+  lab:   { heading: 'Звіт', title: 'Назва роботи', titlePh: 'Лабораторна робота №1. Дослідження алгоритмів сортування',
+           hint: 'Титулка, зміст і нумерація складуться автоматично' },
+  essay: { heading: 'Реферат', title: 'Тема реферату', titlePh: 'Методи оптимізації нейронних мереж',
+           hint: 'За методичкою ФШІ: кожен розділ з нової сторінки, нумерація в межах розділу' },
+};
 
 async function initEditor() {
   auth.guard();
   fillSidebar();
+  ensureKatex().then(() => { renderSections(); refreshLive(); }).catch(() => {});
 
   ['btn-add-sec', 'btn-add-sec-bottom', 'btn-add-sec-side'].forEach(id =>
     document.getElementById(id)?.addEventListener('click', addSection));
@@ -400,20 +637,42 @@ async function initEditor() {
   document.getElementById('btn-conclusion')?.addEventListener('click', streamConclusion);
   document.getElementById('btn-generate')?.addEventListener('click', generateDocx);
   document.getElementById('btn-preview')?.addEventListener('click', previewReport);
+  document.getElementById('btn-tex')?.addEventListener('click', downloadTex);
+  document.getElementById('btn-intro')?.addEventListener('click', draftIntroduction);
 
   document.querySelectorAll('.seg[data-gender]').forEach(seg => seg.addEventListener('click', e => {
     const g = e.target.closest('[data-g]')?.dataset.g;
     if (g) setGender(seg.dataset.gender, g);
   }));
+  document.getElementById('kind-seg')?.addEventListener('click', e => {
+    const k = e.target.closest('[data-kind]')?.dataset.kind;
+    if (k && k !== reportKind) setKind(k);
+  });
+  document.getElementById('mode-seg')?.addEventListener('click', e => {
+    const m = e.target.closest('[data-mode]')?.dataset.mode;
+    if (m && m !== editorMode) switchMode(m);
+  });
   setGender('student', 'm');
   setGender('teacher', 'f');
 
-  ['f-title', 'f-discipline', 'f-group', 'f-student', 'f-teacher', 'f-goal', 'ai-output'].forEach(id =>
+  ['f-title', 'f-discipline', 'f-group', 'f-student', 'f-teacher', 'f-goal', 'f-intro', 'f-refs', 'ai-output'].forEach(id =>
     document.getElementById(id)?.addEventListener('input', updateReadiness));
+  document.getElementById('f-student')?.addEventListener('input', updateStudentSeg);
+  // In LaTeX mode the conclusion box writes into \section*{Висновки} of the source
+  document.getElementById('ai-output')?.addEventListener('input', e => {
+    if (editorMode === 'latex') syncTexSection(['Висновки', 'Висновок'], e.target.value);
+  });
 
   const secs = document.getElementById('sections-container');
   secs?.addEventListener('click', onImageCardEvent);
   secs?.addEventListener('input', onImageCardEvent);
+  secs?.addEventListener('click', onBlocksClick);
+  secs?.addEventListener('input', onBlocksInput);
+  secs?.addEventListener('change', onBlocksInput);
+  secs?.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && e.target.matches('.code-wrap textarea')) { e.preventDefault(); insertAtCursor(e.target, '    '); }
+  });
+  document.getElementById('unplaced')?.addEventListener('change', placeImage);
 
   // Text fields grow with their content instead of scrolling inside a small box
   document.addEventListener('input', e => {
@@ -426,6 +685,7 @@ async function initEditor() {
   });
   document.addEventListener('focusin', e => followFocus(e.target));
   document.getElementById('btn-live-open')?.addEventListener('click', previewReport);
+  window.addEventListener('beforeunload', e => { if (tex.dirty) e.preventDefault(); });
 
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !document.querySelector('.pv')) {
@@ -438,12 +698,48 @@ async function initEditor() {
   reportId = params.get('id') ? parseInt(params.get('id')) : null;
 
   if (reportId) {
-    document.getElementById('editor-heading').textContent = 'Редагування звіту';
     await loadReport(reportId);
   } else {
+    setKind(params.get('kind') === 'essay' ? 'essay' : 'lab');
+    setMode('form');
     sections = [];
     renderSections();
   }
+}
+
+function setKind(kind) {
+  reportKind = kind;
+  document.body.dataset.kind = kind;
+  const t = KIND_TEXT[kind];
+  document.querySelectorAll('#kind-seg [data-kind]').forEach(b => {
+    b.classList.toggle('on', b.dataset.kind === kind);
+    b.setAttribute('aria-checked', b.dataset.kind === kind);
+  });
+  document.getElementById('editor-heading').textContent = reportId ? `${t.heading}: редагування` : `Новий ${t.heading.toLowerCase()}`;
+  document.getElementById('lbl-title').textContent = t.title;
+  document.getElementById('f-title').placeholder = t.titlePh;
+  document.getElementById('kind-hint').textContent = t.hint;
+  document.getElementById('refs-badge').textContent = kind === 'essay' ? 'обов’язковий за методичкою' : 'необов’язково';
+  document.querySelectorAll('.seg[data-gender="teacher"] [data-g]').forEach(b => { b.textContent = b.dataset[kind]; });
+  const date = document.getElementById('f-date');
+  if (kind === 'essay' && date && !date.value) date.value = new Date().toLocaleDateString('uk-UA');
+  if (editorMode === 'latex' && tex.source) parseTexSoon();
+  renderSections();
+  document.querySelectorAll('.main textarea').forEach(autoGrow);
+}
+
+function setMode(mode) {
+  editorMode = mode;
+  document.body.dataset.mode = mode;
+  document.querySelectorAll('#mode-seg [data-mode]').forEach(b => {
+    b.classList.toggle('on', b.dataset.mode === mode);
+    b.setAttribute('aria-checked', b.dataset.mode === mode);
+  });
+}
+
+function updateStudentSeg() {
+  const many = (document.getElementById('f-student')?.value || '').split('\n').filter(l => l.trim()).length > 1;
+  document.querySelector('.seg[data-gender="student"]')?.classList.toggle('hidden', many);
 }
 
 function autoGrow(el) {
@@ -455,13 +751,18 @@ function autoGrow(el) {
 /* ── live preview (wide screens): the document as it will look, following the focused field ── */
 let liveTimer = null, liveFocus = null;
 
+const refsList = () => (document.getElementById('f-refs')?.value || '').split('\n').map(l => l.trim()).filter(Boolean);
+
 function currentDoc() {
   const v = id => document.getElementById(id)?.value ?? '';
   return {
+    kind: reportKind,
     title: v('f-title'), discipline: v('f-discipline'), group: v('f-group'),
-    teacher: v('f-teacher'), teacher_gender: genders.teacher,
-    student_name: v('f-student'), student_gender: genders.student,
-    goal: v('f-goal'), conclusion: v('ai-output'), sections,
+    faculty: v('f-faculty'), department: v('f-department'),
+    teacher: v('f-teacher'), teacher_gender: genders.teacher, teacher_position: v('f-position'),
+    student_name: v('f-student'), student_gender: genders.student, work_date: v('f-date'),
+    goal: v('f-goal'), introduction: v('f-intro'), conclusion: v('ai-output'),
+    bibliography: refsList(), sections,
   };
 }
 
@@ -479,9 +780,10 @@ function refreshLive() {
 }
 
 const LIVE_TARGETS = {
-  'f-title': '.dv-title', 'f-discipline': '.dv-title', 'f-group': '.dv-title',
-  'f-student': '.dv-title', 'f-teacher': '.dv-title',
-  'f-goal': '.dv-body', 'ai-output': '[data-bind="doc|conclusion"]',
+  'f-title': '.dv-title', 'f-discipline': '.dv-title', 'f-group': '.dv-title', 'f-faculty': '.dv-title',
+  'f-department': '.dv-title', 'f-student': '.dv-title', 'f-teacher': '.dv-title', 'f-position': '.dv-title',
+  'f-date': '.dv-title', 'f-goal': '.dv-body', 'f-intro': '.dv-body',
+  'ai-output': '[data-bind="doc|conclusion"]', 'f-refs': '[data-bind="doc|bibliography"]',
 };
 
 function followFocus(el) {
@@ -522,53 +824,50 @@ async function loadReport(id) {
       req('GET', `/reports/${id}`),
       req('GET', `/reports/${id}/images`).catch(() => []),
     ]);
-    document.getElementById('f-title').value      = r.title        || '';
-    document.getElementById('f-discipline').value = r.discipline   || '';
-    document.getElementById('f-teacher').value    = r.teacher      || '';
-    document.getElementById('f-student').value    = r.student_name || '';
-    document.getElementById('f-group').value      = r.group        || '';
-    document.getElementById('f-goal').value       = r.goal         || '';
+    const set = (elId, value) => { const el = document.getElementById(elId); if (el) el.value = value || ''; };
+    set('f-title', r.title);           set('f-discipline', r.discipline);
+    set('f-teacher', r.teacher);       set('f-student', r.student_name);
+    set('f-group', r.group);           set('f-goal', r.goal);
+    set('f-faculty', r.faculty);       set('f-department', r.department);
+    set('f-position', r.teacher_position); set('f-date', r.work_date);
+    set('f-intro', r.introduction);    set('f-refs', (r.bibliography || []).join('\n'));
+    set('ai-output', r.conclusion);
     setGender('student', r.student_gender || 'm');
     setGender('teacher', r.teacher_gender || 'f');
+    updateStudentSeg();
 
     sections = toEditableSections(r.sections);
     reportImages = imgs || [];
-    renderSections();
-
-    document.getElementById('ai-output').value = r.conclusion || '';
+    setMode(r.editor_mode === 'latex' ? 'latex' : 'form');
+    setKind(r.kind === 'essay' ? 'essay' : 'lab');
+    if (editorMode === 'latex') {
+      tex.source = r.latex_source || '';
+      renderTexPane();
+    }
     updateReadiness();
     document.querySelectorAll('.main textarea').forEach(autoGrow);
     refreshLive();
   } catch (ex) { toast('Помилка завантаження: ' + ex.message, 'err'); }
 }
 
-function toEditableSections(raw) {
-  const toBlock = (s, i) => ({
-    id: i, title: s.title || '', text: s.text || '', code: s.code || '', language: s.language || 'python',
-  });
-  return (raw || []).map((s, i) => ({ ...toBlock(s, i), subsections: (s.subsections || []).map(toBlock) }));
-}
-
-function sectionsPayload(list) {
-  const pick = b => ({ title: b.title, text: b.text, code: b.code, language: b.language });
-  return list.map(s => ({ ...pick(s), subsections: (s.subsections || []).map(pick) }));
-}
-
 /* ── image paths follow their sections when the structure changes ── */
 // mapPath("1.0") → new path, or null when the image's section is gone
 const pathMaps = {
   removeSection: i => p => {
+    if (p === 'u') return p;
     const [a, b] = p.split('.').map(Number);
     if (a === i) return null;
     return a > i ? [a - 1, b].filter(x => x !== undefined).join('.') : p;
   },
   removeSubsection: (i, j) => p => {
+    if (p === 'u') return p;
     const [a, b] = p.split('.').map(Number);
     if (a !== i || b === undefined) return p;
     if (b === j) return null;
     return b > j ? `${a}.${b - 1}` : p;
   },
   swapSections: (i, k) => p => {
+    if (p === 'u') return p;
     const [a, ...rest] = p.split('.');
     const n = Number(a);
     return n === i ? [k, ...rest].join('.') : n === k ? [i, ...rest].join('.') : p;
@@ -643,8 +942,6 @@ function openLightbox(list, startId) {
   show();
 }
 
-const hasContent = b => Boolean(b.title?.trim() || b.text?.trim() || b.code?.trim() || b.subsections?.length);
-
 /* ── sections ── */
 // path: "0" — section, "0.1" — its subsection (same format the backend stores for images)
 function blockAt(path) {
@@ -652,12 +949,8 @@ function blockAt(path) {
   return j === undefined ? sections[i] : sections[i].subsections[j];
 }
 
-function newBlock() {
-  return { id: Date.now(), title: '', text: '', code: '', language: 'python' };
-}
-
 function addSection() {
-  sections.push({ ...newBlock(), subsections: [] });
+  sections.push(newItem(true));
   renderSections();
   const last = document.querySelectorAll('#sections-container > .section-item');
   last[last.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -686,7 +979,7 @@ async function moveSection(idx, dir) {
 }
 
 function addSubsection(i) {
-  sections[i].subsections.push(newBlock());
+  sections[i].subsections.push(newItem(false));
   renderSections();
   const el = document.getElementById(`sec-${i}-${sections[i].subsections.length - 1}`);
   el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -706,28 +999,72 @@ function setBlockTitle(path, value) {
 }
 
 const LANGS = ['python','javascript','typescript','java','cpp','c','sql','bash','html','css'];
+const BLOCK_LABEL = { text: 'Текст', code: 'Код', formula: 'Формула' };
 
-function blockFieldsHtml(path, block, kind) {
-  const id = String(path).replace('.', '-');
+/* One content block of a section: text / code / formula */
+function blockCardHtml(path, k, b, total, formulaNo) {
+  const key = `${path}|${k}`;
+  const tools = `
+    <span class="blk-tools">
+      <button class="pv-icon-btn" data-bact="up" title="Вище" ${k === 0 ? 'disabled' : ''}>${ICONS.up}</button>
+      <button class="pv-icon-btn" data-bact="down" title="Нижче" ${k === total - 1 ? 'disabled' : ''}>${ICONS.down}</button>
+      <button class="pv-icon-btn danger" data-bact="del" title="Видалити блок">${ICONS.trash}</button>
+    </span>`;
+  let body = '';
+  if (b.type === 'text') {
+    body = `
+      <textarea rows="3" data-f="text" placeholder="Текст. Формула всередині рядка — у доларах: $E = mc^2$">${esc(b.text)}</textarea>
+      <div class="inline-preview ${hasInlineMath(b.text) ? '' : 'hidden'}">${(b.text || '').split('\n').filter(l => l.trim()).map(inlineHtml).join('<br>')}</div>`;
+  } else if (b.type === 'code') {
+    body = `
+      <div class="code-wrap">
+        <div class="code-head">
+          <select class="lang-select" data-f="language">
+            ${LANGS.map(l => `<option value="${l}" ${b.language === l ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <span class="text-sm text-muted">лістинг з підписом</span>
+        </div>
+        <textarea spellcheck="false" data-f="code" placeholder="Вставте код">${esc(b.code)}</textarea>
+      </div>`;
+  } else {
+    body = `
+      <div class="formula-box">
+        <div class="formula-view">${mathHtml(b.latex, true) || '<span class="text-muted text-sm">Попередній вигляд формули</span>'}</div>
+        <div class="formula-row">
+          <textarea class="formula-src" rows="1" spellcheck="false" data-f="latex"
+                    placeholder="\\frac{1}{n}\\sum_{i=1}^{n} x_i">${esc(b.latex)}</textarea>
+          <span class="formula-no">(${formulaNo})</span>
+        </div>
+        <div class="snippets">
+          ${MATH_SNIPPETS.map(([label], n) => `<button type="button" class="snip" data-snip="${n}" title="${esc(MATH_SNIPPETS[n][1])}">${esc(label)}</button>`).join('')}
+          <button type="button" class="snip snip-py" data-bact="py" title="Формула з Python-функції (latexify)">${ICONS.python} З Python</button>
+        </div>
+        <p class="formula-err warn-text text-sm hidden"></p>
+      </div>`;
+  }
   return `
-        <div class="form-group">
-          <label>Текст ${kind}</label>
-          <textarea rows="4" placeholder="Що було зроблено, які результати отримано"
-                    oninput="blockAt('${path}').text = this.value; updateReadiness()">${esc(block.text)}</textarea>
+    <div class="blk blk-${b.type}" data-blk="${key}">
+      <div class="blk-head"><span class="blk-type">${BLOCK_LABEL[b.type]}</span>${tools}</div>
+      ${body}
+    </div>`;
+}
+
+function itemBodyHtml(path, item, formulaCounter) {
+  const id = String(path).replace('.', '-');
+  const blocks = item.blocks.map((b, k) => {
+    const no = b.type === 'formula' ? `${Number(String(path).split('.')[0]) + 1}.${++formulaCounter.n}` : '';
+    return blockCardHtml(path, k, b, item.blocks.length, no);
+  }).join('');
+  return `
+        <div class="blk-list">${blocks}</div>
+        <div class="add-bar">
+          <span class="text-sm text-muted">Додати:</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-add="text" data-path="${path}">${ICONS.text} Текст</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-add="code" data-path="${path}">${ICONS.code} Код</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-add="formula" data-path="${path}">${ICONS.sigma} Формула</button>
         </div>
         <div class="form-group">
-          <label>Код <span class="text-muted">— якщо є</span></label>
-          <div class="code-wrap">
-            <div class="code-head">
-              <select class="lang-select" onchange="blockAt('${path}').language = this.value">
-                ${LANGS.map(l => `<option value="${l}" ${block.language === l ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-            </div>
-            <textarea spellcheck="false" placeholder="Вставте код" oninput="blockAt('${path}').code = this.value">${esc(block.code)}</textarea>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Рисунки <span class="text-muted">— у документі йдуть у цьому порядку; клік по зображенню — перегляд</span></label>
+          <label>Рисунки <span class="text-muted">— ідуть після тексту розділу, у цьому порядку; клік — перегляд</span></label>
           <div class="upload-zone" onclick="triggerUpload('${path}')"
                ondragover="event.preventDefault(); this.classList.add('drag')"
                ondragleave="this.classList.remove('drag')"
@@ -745,9 +1082,11 @@ function renderSections() {
   if (!container) return;
 
   if (!sections.length) {
-    container.innerHTML = '<p class="text-sm text-muted" style="text-align:center;padding:14px 0">Розділів ще немає. Додайте перший — наприклад, «Хід роботи».</p>';
+    container.innerHTML = `<p class="text-sm text-muted" style="text-align:center;padding:14px 0">Розділів ще немає. Додайте перший — наприклад, «${reportKind === 'essay' ? 'Аналіз предметної області' : 'Хід роботи'}».</p>`;
   } else {
-    container.innerHTML = sections.map((sec, i) => `
+    container.innerHTML = sections.map((sec, i) => {
+      const counter = { n: 0 };     // formulas are numbered within a section: (1.1), (1.2)
+      return `
     <div class="section-item" id="sec-${i}">
       <div class="section-head">
         <span class="sec-num">${i + 1}</span>
@@ -756,7 +1095,7 @@ function renderSections() {
         <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})" title="Видалити розділ">${ICONS.trash}</button>
       </div>
       <div class="section-body">
-        ${blockFieldsHtml(`${i}`, sec, 'розділу')}
+        ${itemBodyHtml(`${i}`, sec, counter)}
         ${sec.subsections.map((sub, j) => `
         <div class="section-item subsection-item" id="sec-${i}-${j}">
           <div class="section-head">
@@ -766,18 +1105,102 @@ function renderSections() {
             <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})" title="Видалити підрозділ">${ICONS.trash}</button>
           </div>
           <div class="section-body">
-            ${blockFieldsHtml(`${i}.${j}`, sub, 'підрозділу')}
+            ${itemBodyHtml(`${i}.${j}`, sub, counter)}
           </div>
         </div>`).join('')}
         <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">${ICONS.plus} Підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
       </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
     new Set(reportImages.map(i => i.section_path)).forEach(renderImageGrid);
     container.querySelectorAll('textarea').forEach(autoGrow);
   }
+  renderUnplaced();
   renderOutline();
   updateReadiness();
   refreshLive();
+}
+
+/* ── block events (delegated from #sections-container) ── */
+const blockFromEl = el => {
+  const card = el.closest('[data-blk]');
+  if (!card) return {};
+  const [path, k] = card.dataset.blk.split('|');
+  return { card, path, k: Number(k), item: blockAt(path), block: blockAt(path).blocks[Number(k)] };
+};
+
+const checkTimers = new WeakMap();
+function onBlocksInput(e) {
+  const field = e.target.dataset?.f;
+  if (!field) return;
+  const { card, block } = blockFromEl(e.target);
+  if (!block) return;
+  block[field] = e.target.value;
+  if (field === 'text') {
+    const prev = card.querySelector('.inline-preview');
+    const show = hasInlineMath(block.text);
+    prev.classList.toggle('hidden', !show);
+    if (show) prev.innerHTML = block.text.split('\n').filter(l => l.trim()).map(inlineHtml).join('<br>');
+    updateReadiness();
+  }
+  if (field === 'latex') {
+    card.querySelector('.formula-view').innerHTML = mathHtml(block.latex, true) || '<span class="text-muted text-sm">Попередній вигляд формули</span>';
+    // KaTeX is forgiving; check what the Word / PDF converter will make of it
+    clearTimeout(checkTimers.get(card));
+    checkTimers.set(card, setTimeout(async () => {
+      const err = card.querySelector('.formula-err');
+      if (!block.latex.trim()) { err.classList.add('hidden'); return; }
+      try {
+        const r = await req('POST', '/latex/check', { latex: block.latex });
+        err.textContent = r.error ? `У Word / PDF ця формула може не відобразитись: ${r.error}` : '';
+        err.classList.toggle('hidden', !r.error);
+      } catch { /* the preview still works */ }
+    }, 700));
+  }
+}
+
+function onBlocksClick(e) {
+  const add = e.target.closest('[data-add]');
+  if (add) {
+    const item = blockAt(add.dataset.path);
+    const make = { text: newTextBlock, code: newCodeBlock, formula: newFormulaBlock }[add.dataset.add];
+    item.blocks.push(make());
+    renderSections();
+    const cards = document.querySelectorAll(`[data-blk^="${add.dataset.path}|"]`);
+    const last = [...cards].filter(c => c.dataset.blk.split('|')[0] === add.dataset.path).pop();
+    last?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    last?.querySelector('textarea')?.focus({ preventScroll: true });
+    return;
+  }
+  const snip = e.target.closest('[data-snip]');
+  if (snip) {
+    const [, latex, back] = MATH_SNIPPETS[Number(snip.dataset.snip)];
+    insertAtCursor(snip.closest('.formula-box').querySelector('.formula-src'), latex, back);
+    return;
+  }
+  const btn = e.target.closest('[data-bact]');
+  if (!btn) return;
+  const { card, item, k, block } = blockFromEl(btn);
+  if (!block) return;
+  const act = btn.dataset.bact;
+  if (act === 'py') {
+    openPyDialog(latex => {
+      const src = card.querySelector('.formula-src');
+      src.value = latex;
+      src.dispatchEvent(new Event('input', { bubbles: true }));
+      autoGrow(src);
+    });
+    return;
+  }
+  if (act === 'del') {
+    if (blockFilled(block) && !confirm(`Видалити блок «${BLOCK_LABEL[block.type]}»?`)) return;
+    item.blocks.splice(k, 1);
+  } else {
+    const to = k + (act === 'up' ? -1 : 1);
+    if (to < 0 || to >= item.blocks.length) return;
+    [item.blocks[k], item.blocks[to]] = [item.blocks[to], item.blocks[k]];
+  }
+  renderSections();
 }
 
 /* ── right panel: outline + readiness ── */
@@ -785,30 +1208,32 @@ function renderOutline() {
   const nav = document.getElementById('outline');
   if (!nav) return;
   if (!sections.length) {
-    nav.innerHTML = '<p class="outline-empty">Тут з\'явиться зміст звіту. Розділи можна додавати звідси, не прокручуючи сторінку.</p>';
+    nav.innerHTML = `<p class="outline-empty">${editorMode === 'latex' ? 'Розділи з\'являться тут, щойно ви напишете \\section{…}.' : 'Тут з\'явиться зміст звіту. Розділи можна додавати звідси, не прокручуючи сторінку.'}</p>`;
     return;
   }
   const n = sections.length;
+  const latex = editorMode === 'latex';
   nav.innerHTML = sections.map((s, i) => `
     <div class="ol-item">
-      <a href="#sec-${i}" class="ol-link" data-target="sec-${i}">
+      <a href="#sec-${i}" class="ol-link" data-target="sec-${i}" data-sec="${i}">
         <span class="ol-num">${i + 1}</span>
         <span class="ol-title ${s.title.trim() ? '' : 'untitled'}">${esc(s.title.trim() || 'Без назви')}</span>
       </a>
-      <span class="ol-actions">
+      ${latex ? '' : `<span class="ol-actions">
         <button class="pv-icon-btn" title="Вище" ${i === 0 ? 'disabled' : ''} onclick="moveSection(${i},-1)">${ICONS.up}</button>
         <button class="pv-icon-btn" title="Нижче" ${i === n - 1 ? 'disabled' : ''} onclick="moveSection(${i},1)">${ICONS.down}</button>
         <button class="pv-icon-btn" title="Додати підрозділ" onclick="addSubsection(${i})">${ICONS.plus}</button>
-      </span>
+      </span>`}
     </div>
     ${s.subsections.map((sub, j) => `
-    <a href="#sec-${i}-${j}" class="ol-link ol-sub" data-target="sec-${i}-${j}">
+    <a href="#sec-${i}-${j}" class="ol-link ol-sub" data-target="sec-${i}-${j}" data-sec="${i}" data-sub="${j}">
       <span class="ol-num">${i + 1}.${j + 1}</span>
       <span class="ol-title ${sub.title.trim() ? '' : 'untitled'}">${esc(sub.title.trim() || 'Без назви')}</span>
     </a>`).join('')}`).join('');
 
   nav.querySelectorAll('.ol-link').forEach(a => a.onclick = e => {
     e.preventDefault();
+    if (editorMode === 'latex') { jumpToTexHeading(Number(a.dataset.sec), a.dataset.sub === undefined ? null : Number(a.dataset.sub)); return; }
     const el = document.getElementById(a.dataset.target);
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     el?.querySelector('.sec-name')?.focus({ preventScroll: true });
@@ -817,16 +1242,22 @@ function renderOutline() {
 
 function updateReadiness() {
   const val = id => document.getElementById(id)?.value.trim();
+  const essay = reportKind === 'essay';
+  const texTarget = id => editorMode === 'latex' ? 'tex-src' : id;
   const checks = [
-    ['Назва роботи',  () => val('f-title'),      'f-title'],
+    [essay ? 'Тема' : 'Назва роботи', () => val('f-title'), 'f-title'],
     ['Дисципліна',    () => val('f-discipline'), 'f-discipline'],
     ['Група',         () => val('f-group'),      'f-group'],
     ['Студент',       () => val('f-student'),    'f-student'],
     ['Викладач',      () => val('f-teacher'),    'f-teacher'],
-    ['Мета',          () => val('f-goal'),       'f-goal'],
-    ['Хоча б один розділ з текстом', () => sections.some(s => s.text.trim() || s.subsections.some(b => b.text.trim())), 'btn-add-sec'],
-    ['Назви всіх розділів', () => sections.length && sections.every(s => s.title.trim() && s.subsections.every(b => b.title.trim())), 'sections-container'],
+    ...(essay ? [
+      ['Факультет і кафедра', () => val('f-faculty') && val('f-department'), 'f-faculty'],
+      ['Вступ', () => val('f-intro'), texTarget('f-intro')],
+    ] : [['Мета', () => val('f-goal'), texTarget('f-goal')]]),
+    ['Хоча б один розділ з текстом', () => sections.some(s => itemText(s) || s.subsections.some(itemText)), texTarget('btn-add-sec')],
+    ['Назви всіх розділів', () => sections.length && sections.every(s => s.title.trim() && s.subsections.every(b => b.title.trim())), texTarget('sections-container')],
     ['Висновки',      () => val('ai-output'),    'ai-output'],
+    ...(essay ? [['Перелік посилань', () => refsList().length, texTarget('f-refs')]] : []),
   ];
   const missing = checks.filter(([, ok]) => !ok());
   const done = checks.length - missing.length;
@@ -914,6 +1345,38 @@ function renderImageGrid(path) {
     </div>`).join('');
 }
 
+// Images uploaded in LaTeX mode but not referenced in the source: offer to put them in a section
+function renderUnplaced() {
+  const box = document.getElementById('unplaced');
+  if (!box) return;
+  const list = reportImages.filter(i => i.section_path === 'u');
+  box.classList.toggle('hidden', !list.length || editorMode === 'latex');
+  if (!list.length) { box.innerHTML = ''; return; }
+  const options = sections.flatMap((s, i) => [
+    `<option value="${i}">${i + 1} ${esc(s.title || 'Без назви')}</option>`,
+    ...s.subsections.map((b, j) => `<option value="${i}.${j}">${i + 1}.${j + 1} ${esc(b.title || 'Без назви')}</option>`),
+  ]).join('');
+  box.innerHTML = `
+    <p class="text-sm"><b>Не вставлені рисунки</b> <span class="text-muted">— їх немає в документі, поки не оберете розділ</span></p>
+    <div class="unplaced-list">${list.map(img => `
+      <div class="unplaced-item" data-img-id="${img.id}">
+        <img src="${API_URL}${img.url}" alt="">
+        <select data-place="${img.id}"><option value="">У розділ…</option>${options}</select>
+      </div>`).join('')}</div>`;
+}
+
+async function placeImage(e) {
+  const sel = e.target.closest('[data-place]');
+  if (!sel || !sel.value) return;
+  const imgId = Number(sel.dataset.place);
+  const position = imagesIn(reportImages, sel.value).length;
+  try {
+    await req('PATCH', `/reports/${reportId}/images/${imgId}`, { section_path: sel.value, position });
+    reportImages = reportImages.map(i => i.id === imgId ? { ...i, section_path: sel.value, position } : i);
+    renderSections();
+  } catch (ex) { toast(ex.message, 'err'); }
+}
+
 const captionTimers = {};
 function onImageCardEvent(e) {
   const el = e.target.closest('[data-imgact]');
@@ -950,22 +1413,247 @@ function onImageCardEvent(e) {
   }
 }
 
+/* ═════════ LaTeX mode ═════════ */
+async function switchMode(mode) {
+  if (mode === 'latex') {
+    if (!(await saveReport({ quiet: true }))) return;
+    try {
+      const r = await req('GET', `/reports/${reportId}/latex`);
+      tex.source = r.source;
+      setMode('latex');
+      renderTexPane();
+      await saveTex();
+      toast('Режим LaTeX: увесь вміст звіту тепер у коді');
+    } catch (ex) { toast(ex.message, 'err'); }
+    return;
+  }
+  if (!confirm('Повернутись до форми? Звіт залишиться, але те, що форма не підтримує (\\textbf, таблиці тощо), буде спрощено до тексту.')) return;
+  if (!(await saveTex())) return;
+  try {
+    await req('PATCH', `/reports/${reportId}`, { editor_mode: 'form' });
+    tex.source = '';
+    tex.dirty = false;
+    setMode('form');
+    await loadReport(reportId);
+  } catch (ex) { toast(ex.message, 'err'); }
+}
+
+function renderTexPane() {
+  const pane = document.getElementById('latex-pane');
+  if (!pane) return;
+  const tools = [
+    ['sec', 'Розділ', '\\section{Назва розділу}\n\n'],
+    ['sub', 'Підрозділ', '\\subsection{Назва підрозділу}\n\n'],
+    ['eq', 'Формула', '\\begin{equation}\n  \n\\end{equation}\n', 15],
+    ['inl', '$ в тексті', '$$', 1],
+    ['code', 'Код', '\\begin{lstlisting}[language=Python]\n\n\\end{lstlisting}\n', 17],
+    ['list', 'Список', '\\begin{itemize}\n  \\item \n\\end{itemize}\n', 15],
+    ['cite', 'Посилання [1]', '\\cite{1}'],
+  ];
+  pane.innerHTML = `
+    <div class="tex-toolbar">
+      ${tools.map(([id, label]) => `<button type="button" class="snip" data-tex="${id}">${esc(label)}</button>`).join('')}
+      <button type="button" class="snip snip-py" data-tex-py>${ICONS.python} Формула з Python</button>
+      <button type="button" class="snip" data-tex-img>${ICONS.image} Рисунок</button>
+    </div>
+    <textarea id="tex-src" class="tex-src" spellcheck="false" rows="16"></textarea>
+    <div class="tex-status text-sm" id="tex-status"></div>
+    <div id="tex-warnings"></div>
+    <div class="tex-images" id="tex-images"></div>
+    <p class="text-sm text-muted">Підтримується: <code>\\section</code>, <code>\\subsection</code>, <code>\\section*{Мета роботи / Вступ / Висновки}</code>,
+      абзаци, <code>$…$</code>, <code>equation</code>/<code>align</code>/<code>\\[…\\]</code>, <code>lstlisting</code>/<code>minted</code>,
+      <code>itemize</code>/<code>enumerate</code>, <code>figure</code> з рисунками звіту, <code>thebibliography</code>.
+      Повний документ з преамбулою — кнопка «.tex» угорі (для Overleaf, XeLaTeX).</p>`;
+  const ta = pane.querySelector('#tex-src');
+  ta.value = tex.source;
+  autoGrow(ta);
+  ta.addEventListener('input', () => {
+    tex.source = ta.value;
+    tex.dirty = true;
+    setTexStatus('Є незбережені зміни…');
+    parseTexSoon();
+    clearTimeout(tex.saveTimer);
+    tex.saveTimer = setTimeout(saveTex, 2500);       // LaTeX mode saves by itself
+  });
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Tab') { e.preventDefault(); insertAtCursor(ta, '  '); }
+  });
+  pane.querySelector('.tex-toolbar').addEventListener('click', e => {
+    const b = e.target.closest('[data-tex]');
+    if (b) {
+      const [, , text, back = 0] = tools.find(t => t[0] === b.dataset.tex);
+      insertAtCursor(ta, text, back);
+    }
+    if (e.target.closest('[data-tex-py]')) {
+      openPyDialog(latex => insertAtCursor(ta, `\\begin{equation}\n  ${latex}\n\\end{equation}\n`));
+    }
+    if (e.target.closest('[data-tex-img]')) {
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', multiple: true });
+      input.onchange = async () => {
+        const created = await uploadImages(reportId, [...input.files], 'u');
+        reportImages.push(...created);
+        created.forEach(img => insertAtCursor(ta, figureSnippet(img)));
+        renderTexImages();
+      };
+      input.click();
+    }
+  });
+  pane.querySelector('#tex-images').addEventListener('click', e => {
+    const ins = e.target.closest('[data-tex-insert]');
+    if (ins) insertAtCursor(ta, figureSnippet(reportImages.find(i => i.id === Number(ins.dataset.texInsert))));
+    const view = e.target.closest('[data-tex-view]');
+    if (view) openLightbox(docOrder(reportImages), Number(view.dataset.texView));
+  });
+  renderTexImages();
+  parseTexSoon(0);
+}
+
+const figureSnippet = img =>
+  `\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\textwidth]{img-${img.id}}\n  \\caption{${texEscape(img.caption || '')}}\n\\end{figure}\n`;
+
+function renderTexImages() {
+  const box = document.getElementById('tex-images');
+  if (!box) return;
+  if (!reportImages.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<p class="text-sm"><b>Рисунки звіту</b> <span class="text-muted">— у коді це <code>img-номер</code></span></p>
+    <div class="tex-img-list">${reportImages.map(img => `
+      <div class="tex-img ${img.section_path === 'u' ? 'unused' : ''}">
+        <button class="img-view" data-tex-view="${img.id}" title="Переглянути"><img src="${API_URL}${img.url}" alt="" loading="lazy"></button>
+        <code>img-${img.id}</code>
+        <span class="text-sm text-muted">${img.section_path === 'u' ? 'не вставлено' : `розділ ${img.section_path.split('.').map(n => Number(n) + 1).join('.')}`}</span>
+        <button class="btn btn-ghost btn-sm" data-tex-insert="${img.id}">Вставити</button>
+      </div>`).join('')}</div>`;
+}
+
+const setTexStatus = msg => { const el = document.getElementById('tex-status'); if (el) el.textContent = msg; };
+
+function parseTexSoon(delay = 500) {
+  clearTimeout(tex.timer);
+  tex.timer = setTimeout(parseTex, delay);
+}
+
+// Live preview / outline / readiness from the source, without saving
+async function parseTex() {
+  if (editorMode !== 'latex' || !reportId) return;
+  try {
+    const r = await req('POST', `/reports/${reportId}/latex/parse`, { source: tex.source });
+    applyParsed(r);
+  } catch (ex) { setTexStatus('Не вдалося розібрати: ' + ex.message); }
+}
+
+function applyParsed(r) {
+  sections = toEditableSections(r.sections);
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) { el.value = value || ''; autoGrow(el); }
+  };
+  if (reportKind === 'essay') set('f-intro', r.introduction); else set('f-goal', r.goal);
+  set('ai-output', r.conclusion);
+  set('f-refs', (r.bibliography || []).join('\n'));
+  // figure placement as in the source (saved on the server by saveTex)
+  const placed = new Map(r.figures.map(f => [f.image_id, f]));
+  reportImages = reportImages.map(img => {
+    const f = placed.get(img.id);
+    return f ? { ...img, section_path: f.section_path, position: f.position, caption: f.caption ?? img.caption }
+             : { ...img, section_path: 'u' };
+  });
+  tex.warnings = r.warnings || [];
+  const w = document.getElementById('tex-warnings');
+  if (w) w.innerHTML = tex.warnings.length
+    ? `<div class="tex-warn"><b>Спрощено при розборі:</b><ul>${tex.warnings.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+  if (!tex.dirty) setTexStatus(`Розібрано: ${sections.length} ${plural(sections.length, 'розділ', 'розділи', 'розділів')}`);
+  renderTexImages();
+  renderOutline();
+  updateReadiness();
+  refreshLive();
+}
+
+async function saveTex() {
+  clearTimeout(tex.saveTimer);
+  if (editorMode !== 'latex') return true;
+  setTexStatus('Зберігаємо…');
+  try {
+    const r = await req('PATCH', `/reports/${reportId}`, { ...titlePayload(), editor_mode: 'latex', latex_source: tex.source });
+    tex.dirty = false;
+    reportImages = await req('GET', `/reports/${reportId}/images`).catch(() => reportImages);
+    applyParsed({ sections: r.sections, goal: r.goal, introduction: r.introduction, conclusion: r.conclusion,
+                  bibliography: r.bibliography, warnings: r.latex_warnings,
+                  figures: reportImages.filter(i => i.section_path !== 'u')
+                    .map(i => ({ image_id: i.id, section_path: i.section_path, position: i.position, caption: i.caption })) });
+    setTexStatus('Збережено');
+    return true;
+  } catch (ex) {
+    setTexStatus('Не збережено: ' + ex.message);
+    toast('Не вдалося зберегти LaTeX: ' + ex.message, 'err');
+    return false;
+  }
+}
+
+// Text written outside the code (AI conclusion / introduction, conclusion box) goes into its \section*
+function syncTexSection(names, text, opts) {
+  tex.source = latexReplaceSection(tex.source, names, textToLatexParas(text), opts);
+  const ta = document.getElementById('tex-src');
+  if (ta) { ta.value = tex.source; autoGrow(ta); }
+  tex.dirty = true;
+  clearTimeout(tex.saveTimer);
+  tex.saveTimer = setTimeout(saveTex, 1500);
+}
+
+function jumpToTexHeading(i, j) {
+  const ta = document.getElementById('tex-src');
+  if (!ta) return;
+  const re = /\\(sub)?section(\*?)\s*\{/g;
+  let m, sec = -1, sub = -1, pos = null;
+  while ((m = re.exec(ta.value))) {
+    if (m[2]) continue;
+    if (!m[1]) { sec++; sub = -1; } else sub++;
+    if (sec === i && (j === null ? !m[1] : m[1] && sub === j)) { pos = m.index; break; }
+  }
+  if (pos === null) return;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  const line = ta.value.slice(0, pos).split('\n').length;
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+  window.scrollTo({ top: ta.getBoundingClientRect().top + window.scrollY + line * lh - 160, behavior: 'smooth' });
+}
+
 /* ── save ── */
+function titlePayload() {
+  const v = id => document.getElementById(id)?.value ?? '';
+  return {
+    kind:             reportKind,
+    title:            v('f-title'),
+    discipline:       v('f-discipline'),
+    teacher:          v('f-teacher'),
+    teacher_gender:   genders.teacher,
+    teacher_position: v('f-position'),
+    student_name:     v('f-student').split('\n').map(l => l.trim()).filter(Boolean).join('\n'),
+    student_gender:   genders.student,
+    group:            v('f-group'),
+    faculty:          v('f-faculty'),
+    department:       v('f-department'),
+    work_date:        v('f-date'),
+  };
+}
+
 async function saveReport({ quiet = false } = {}) {
   const btn = document.getElementById('btn-save');
+  if (reportId && editorMode === 'latex') {
+    if (!quiet) setLoading(btn, true);
+    const ok = await saveTex();
+    if (!quiet) { setLoading(btn, false); if (ok) toast('Збережено'); }
+    return ok;
+  }
   if (!quiet) setLoading(btn, true);
 
   const payload = {
-    title:          document.getElementById('f-title').value,
-    discipline:     document.getElementById('f-discipline').value,
-    teacher:        document.getElementById('f-teacher').value,
-    teacher_gender: genders.teacher,
-    student_name:   document.getElementById('f-student').value,
-    student_gender: genders.student,
-    group:          document.getElementById('f-group').value,
-    goal:           document.getElementById('f-goal').value,
-    conclusion:     document.getElementById('ai-output').value,
-    sections:       sectionsPayload(sections),
+    ...titlePayload(),
+    editor_mode:  'form',
+    goal:         document.getElementById('f-goal').value,
+    introduction: document.getElementById('f-intro').value,
+    conclusion:   document.getElementById('ai-output').value,
+    bibliography: refsList(),
+    sections:     sectionsPayload(sections),
   };
 
   try {
@@ -976,12 +1664,31 @@ async function saveReport({ quiet = false } = {}) {
       const r = await req('POST', '/reports', payload);
       reportId = r.id;
       window.history.replaceState({}, '', `editor.html?id=${reportId}`);
-      document.getElementById('editor-heading').textContent = 'Редагування звіту';
-      if (!quiet) toast('Звіт створено');
+      setKind(reportKind);
+      if (!quiet) toast(reportKind === 'essay' ? 'Реферат створено' : 'Звіт створено');
     }
     return true;
   } catch (ex) { toast(ex.message, 'err'); return false; }
   finally      { if (!quiet) setLoading(btn, false); }
+}
+
+/* ── AI: essay introduction ── */
+async function draftIntroduction() {
+  const out = document.getElementById('f-intro');
+  if (out.value.trim() && !confirm('Замінити поточний вступ новою чернеткою?')) return;
+  if (!(await saveReport({ quiet: true }))) return;
+  const btn = document.getElementById('btn-intro');
+  setLoading(btn, true);
+  try {
+    const r = await req('POST', `/reports/${reportId}/generate-introduction`);
+    out.value = r.introduction || '';
+    autoGrow(out);
+    if (editorMode === 'latex') syncTexSection(['Вступ'], out.value, { atStart: true });
+    updateReadiness();
+    refreshLive();
+    toast('Чернетку вступу готово — перевірте її');
+  } catch (ex) { toast(ex.message, 'err'); }
+  finally { setLoading(btn, false); }
 }
 
 /* ── AI conclusion SSE ── */
@@ -1033,6 +1740,7 @@ async function streamConclusion() {
     if (data.error) fail(data.error);
     if (data.done) {
       finish();
+      if (editorMode === 'latex') syncTexSection(['Висновки', 'Висновок'], text);
       toast('Чернетку висновків готово — перевірте її');
     }
   };
@@ -1069,10 +1777,24 @@ async function generateDocx() {
   }
 }
 
+async function downloadTex() {
+  if (!(await saveReport({ quiet: true }))) return;
+  const btn = document.getElementById('btn-tex');
+  setLoading(btn, true);
+  try {
+    await download(`/reports/${reportId}/download/tex`, fileName(currentTitle(), 'zip'));
+    toast('Архів .tex готовий — у Overleaf оберіть компілятор XeLaTeX');
+  } catch (ex) { toast(ex.message, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
 async function previewReport() {
   if (!(await saveReport({ quiet: true }))) return;
   // Edits made in the document go straight to the server — reload the form afterwards
-  openPreview(reportId, currentTitle(), { onClose: changed => changed && loadReport(reportId) });
+  openPreview(reportId, currentTitle(), {
+    readOnly: editorMode === 'latex',
+    onClose: changed => changed && loadReport(reportId),
+  });
 }
 
 function currentTitle() {
@@ -1158,104 +1880,178 @@ const readParas = el => el.innerText.split('\n').map(l => l.trim()).filter(Boole
    DOCUMENT  (HTML copy of the .docx — used by the editable
    document and by the live preview in the editor)
 ═══════════════════════════════════════════════════════ */
+const docLines = t => String(t || '').split('\n').map(l => l.trim()).filter(Boolean);
+// Paragraphs with inline formulas rendered; editable ones switch to raw text while focused
+const mathParas = text => {
+  const lines = docLines(text);
+  return lines.length ? lines.map(l => `<p>${inlineHtml(l)}</p>`).join('') : '<p><br></p>';
+};
+const blockValueField = b => b.type === 'text' ? 'text' : b.type === 'code' ? 'code' : 'latex';
 
 function buildDocSheets(doc, images, { editable = false } = {}) {
+  const essay = doc.kind === 'essay';
   const editAttr = (bind, ph, kind = 'line') => editable
     ? `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}" contenteditable="${kind === 'paras' ? 'true' : PLAIN_EDIT}" spellcheck="true"`
     : `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}"`;
-  const blockBind = (field, i, j) => j === undefined ? `${field}|${i}` : `${field}|${i}|${j}`;
-    const did = doc.student_gender === 'f' ? 'Виконала:' : 'Виконав:';
-    const took = doc.teacher_gender === 'm' ? 'Прийняв:' : 'Прийняла:';
-    const gBtn = (who, label) => editable
-      ? `<button class="dv-gender" data-gender="${who}" title="Натисніть, щоб змінити форму">${label}</button>`
+  const textBlock = (bind, ph, text) =>
+    `<div class="dv-text ${hasInlineMath(text) ? 'has-math' : ''}" ${editAttr(bind, ph, 'paras')}>${mathParas(text)}</div>`;
+  const field = (bind, ph, value) => `<span ${editAttr(bind, ph)}>${esc(value)}</span>`;
+  const students = docLines(doc.student_name);
+  const gBtn = (who, m, f) => {
+    const label = doc[`${who}_gender`] === 'f' ? f : m;
+    return editable
+      ? `<button class="dv-gender" data-gender="${who}" data-m="${m}" data-f="${f}" title="Натисніть, щоб змінити форму">${label}</button>`
       : label;
+  };
+  const year = (doc.work_date || '').trim().slice(-4).match(/^\d{4}$/) ? doc.work_date.trim().slice(-4) : new Date().getFullYear();
+  const pagebreak = essay ? '<div class="dv-pagebreak" aria-hidden="true"><span>нова сторінка</span></div>' : '';
 
-    const titlePage = `
+  const titlePage = essay ? `
+      <section class="dv-sheet dv-title dv-title-essay">
+        <p>Міністерство освіти і науки України</p>
+        <p>Харківський національний університет радіоелектроніки</p>
+        <p>&nbsp;</p><p>&nbsp;</p>
+        <p class="dv-field"><span class="lbl">Факультет</span><span class="u">${field('doc|faculty', 'факультет', doc.faculty)}</span></p>
+        <p class="dv-field"><span class="lbl">Кафедра</span><span class="u">${field('doc|department', 'кафедра', doc.department)}</span></p>
+        <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
+        <p class="dv-big">РЕФЕРАТ</p>
+        <p>&nbsp;</p>
+        <p class="dv-field"><span class="lbl">на тему:</span><span class="u">${field('doc|title', 'тема реферату', doc.title)}</span></p>
+        <p class="dv-hint">(тема реферату)</p>
+        <p>&nbsp;</p>
+        <p class="dv-field"><span class="u">${field('doc|discipline', 'дисципліна', doc.discipline)}</span></p>
+        <p class="dv-hint">(дисципліна)</p>
+        <p>&nbsp;</p><p>&nbsp;</p>
+        <div class="dv-field">
+          <span class="lbl">${students.length > 1 ? 'виконали:' : gBtn('student', 'виконав:', 'виконала:')}</span>
+          <span class="u dv-people">${field('doc|work_date', 'дата', doc.work_date)} студент гр. ${field('doc|group', 'група', doc.group)}
+            <span class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. (кожен з нового рядка)', 'paras')}>${mathParas(doc.student_name)}</span></span>
+        </div>
+        <p class="dv-hint">(дата, група, прізвище, ініціали)</p>
+        <p>&nbsp;</p>
+        <p class="dv-field"><span class="lbl">${gBtn('teacher', 'перевірив', 'перевірила')}</span>
+          <span class="u">${field('doc|teacher_position', 'посада', doc.teacher_position)} ${field('doc|teacher', 'Прізвище І. Б.', doc.teacher)}</span></p>
+        <p class="dv-hint">(посада, прізвище, ініціали)</p>
+        <div class="dv-push"></div>
+        <p>Харків ${year} р.</p>
+      </section>` : `
       <section class="dv-sheet dv-title">
         <p>Міністерство освіти і науки України</p>
         <p>Харківський національний університет радіоелектроніки</p>
         <p>&nbsp;</p>
-        <p>Кафедра штучного інтелекту</p>
+        <p>Кафедра ${field('doc|department', 'штучного інтелекту', doc.department)}</p>
         <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
-        <p>Дисципліна «<span ${editAttr('doc|discipline', 'Назва дисципліни')}>${esc(doc.discipline)}</span>»</p>
-        <p><span ${editAttr('doc|title', 'Назва роботи')}>${esc(doc.title)}</span></p>
+        <p>Дисципліна «${field('doc|discipline', 'Назва дисципліни', doc.discipline)}»</p>
+        <p>${field('doc|title', 'Назва роботи', doc.title)}</p>
         <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
         <div class="dv-sign">
           <div>
-            <p>${gBtn('student', did)}</p>
-            <p>ст. гр. <span ${editAttr('doc|group', 'група')}>${esc(doc.group)}</span></p>
-            <p><span ${editAttr('doc|student_name', 'Прізвище І. Б. студента')}>${esc(doc.student_name)}</span></p>
+            <p>${students.length > 1 ? 'Виконали:' : gBtn('student', 'Виконав:', 'Виконала:')}</p>
+            <p>ст. гр. ${field('doc|group', 'група', doc.group)}</p>
+            <div class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. студента', 'paras')}>${mathParas(doc.student_name)}</div>
           </div>
           <div>
-            <p>${gBtn('teacher', took)}</p>
-            <p><span ${editAttr('doc|teacher', 'Прізвище І. Б. викладача')}>${esc(doc.teacher)}</span></p>
+            <p>${gBtn('teacher', 'Прийняв:', 'Прийняла:')}</p>
+            <p>${field('doc|teacher', 'Прізвище І. Б. викладача', doc.teacher)}</p>
           </div>
         </div>
         <p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>
         <p>Харків – ${new Date().getFullYear()}</p>
       </section>`;
 
-    let listing = 0, figure = 0;
-    const blockHtml = (b, i, j) => {
-      const path = j === undefined ? `${i}` : `${i}.${j}`;
-      const num = j === undefined ? `${i + 1}` : `${i + 1}.${j + 1}`;
-      const title = b.title.trim() || (j === undefined ? `Розділ ${num}` : `Підрозділ ${num}`);
-      const tag = j === undefined ? 'h1' : 'h2';
-      let html = `
+  // Numbering as in report_outline.py: formulas always (section.n); listings / figures
+  // through the document in a lab report, within the section in an essay
+  let listing = 0, figure = 0, sectionListing = 0, sectionFigure = 0, formula = 0;
+  const blockHtml = (item, i, j) => {
+    const path = j === undefined ? `${i}` : `${i}.${j}`;
+    const num = j === undefined ? `${i + 1}` : `${i + 1}.${j + 1}`;
+    const title = item.title.trim() || (j === undefined ? `Розділ ${num}` : `Підрозділ ${num}`);
+    const tag = j === undefined ? 'h1' : 'h2';
+    if (j === undefined) { sectionListing = 0; sectionFigure = 0; formula = 0; }
+    let html = `
+        ${j === undefined ? pagebreak : ''}
         <div class="dv-block" id="dv-${path.replace('.', '-')}" data-path="${path}">
           ${editable ? `<div class="dv-hover">
             ${j === undefined ? `<button data-act="sub" data-path="${path}" title="Додати підрозділ">${ICONS.plus} Підрозділ</button>` : ''}
-            ${b.code ? '' : `<button data-act="code" data-path="${path}" title="Додати лістинг коду">${ICONS.code} Код</button>`}
+            <button data-act="addtext" data-path="${path}" title="Додати абзац тексту">${ICONS.text} Текст</button>
+            <button data-act="addcode" data-path="${path}" title="Додати лістинг коду">${ICONS.code} Код</button>
+            <button data-act="addformula" data-path="${path}" title="Додати формулу">${ICONS.sigma} Формула</button>
             <button data-act="img" data-path="${path}" title="Додати рисунок">${ICONS.image} Рисунок</button>
             <button data-act="del" data-path="${path}" class="danger" title="Видалити">${ICONS.trash}</button>
           </div>` : ''}
-          <${tag} class="dv-h"><span class="dv-num">${num}</span> <span ${editAttr(blockBind('title', i, j), j === undefined ? 'Назва розділу' : 'Назва підрозділу')}>${esc(b.title)}</span></${tag}>
-          <div class="dv-text" ${editAttr(blockBind('text', i, j), 'Текст — що зроблено, які результати', 'paras')}>${paras(b.text)}</div>`;
-      if (b.code) {
-        listing++;
-        html += `<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${listing} – ${esc(title)}</p>
-          <pre class="dv-code" ${editAttr(blockBind('code', i, j), 'Код', 'code')}>${esc(b.code.replace(/\r/g, ''))}</pre>`;
+          <${tag} class="dv-h"><span class="dv-num">${num}</span> <span ${editAttr(`sec|${path}`, j === undefined ? 'Назва розділу' : 'Назва підрозділу')}>${esc(item.title)}</span></${tag}>`;
+
+    item.blocks.forEach((b, k) => {
+      const bind = `blk|${path}|${k}`;
+      const del = editable && (b.type !== 'text' || item.blocks.length > 1)
+        ? `<button class="dv-blk-del" data-act="blkdel" data-path="${path}" data-k="${k}" title="Видалити блок">${ICONS.x}</button>` : '';
+      if (b.type === 'text') {
+        html += `<div class="dv-blk">${del}${textBlock(bind, 'Текст — що зроблено, які результати', b.text)}</div>`;
+      } else if (b.type === 'code') {
+        listing++; sectionListing++;
+        const no = essay ? `${i + 1}.${sectionListing}` : listing;
+        html += `<div class="dv-blk">${del}<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${no} – ${esc(title)}</p>
+          <pre class="dv-code" ${editAttr(bind, 'Код', 'code')}>${esc((b.code || '').replace(/\r/g, ''))}</pre></div>`;
+      } else {
+        formula++;
+        html += `<div class="dv-blk dv-formula">${del}
+          <div class="dv-f-row"><span></span><span class="dv-f-math">${mathHtml(b.latex, true) || (editable ? '<span class="dv-f-empty">формула</span>' : '')}</span><span class="dv-f-no">(${i + 1}.${formula})</span></div>
+          ${editable ? `<code class="dv-f-src" ${editAttr(bind, 'LaTeX формули, напр. \\frac{a}{b}')}>${esc(b.latex)}</code>` : ''}
+        </div>`;
       }
-      const figs = imagesIn(images, path);
-      figs.forEach((img, k) => {
-        figure++;
-        html += `<figure class="dv-fig" data-img="${img.id}">
-            ${img.available === false
-              ? `<div class="dv-fig-lost">Файл рисунка втрачено на сервері — видаліть його і завантажте ще раз</div>`
-              : `<img src="${API_URL}${img.url}" alt="" ${editable ? `data-act="viewimg" data-img="${img.id}" title="Переглянути"` : ''}>`}
-            <figcaption>Рисунок ${figure} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
-            ${editable ? `<div class="dv-fig-tools">
-              <button data-act="imgup" data-img="${img.id}" title="Раніше" ${k === 0 ? 'disabled' : ''}>${ICONS.up}</button>
-              <button data-act="imgdown" data-img="${img.id}" title="Пізніше" ${k === figs.length - 1 ? 'disabled' : ''}>${ICONS.down}</button>
-              <button data-act="delimg" data-img="${img.id}" title="Видалити рисунок">${ICONS.trash}</button>
-            </div>` : ''}
-          </figure>`;
-      });
-      return html + '</div>';
-    };
-
-    const toc = [['МЕТА РОБОТИ', 1]];
-    doc.sections.forEach((s, i) => {
-      toc.push([`${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`, 1, `${i}`]);
-      s.subsections.forEach((b, j) => toc.push([`${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`, 2, `${i}.${j}`]));
     });
-    toc.push(['ВИСНОВКИ', 1]);
 
-    return titlePage + `
+    const figs = imagesIn(images, path);
+    figs.forEach((img, k) => {
+      figure++; sectionFigure++;
+      const no = essay ? `${i + 1}.${sectionFigure}` : figure;
+      html += `<figure class="dv-fig" data-img="${img.id}">
+          ${img.available === false
+            ? `<div class="dv-fig-lost">Файл рисунка втрачено на сервері — видаліть його і завантажте ще раз</div>`
+            : `<img src="${API_URL}${img.url}" alt="" ${editable ? `data-act="viewimg" data-img="${img.id}" title="Переглянути"` : ''}>`}
+          <figcaption>Рисунок ${no} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
+          ${editable ? `<div class="dv-fig-tools">
+            <button data-act="imgup" data-img="${img.id}" title="Раніше" ${k === 0 ? 'disabled' : ''}>${ICONS.up}</button>
+            <button data-act="imgdown" data-img="${img.id}" title="Пізніше" ${k === figs.length - 1 ? 'disabled' : ''}>${ICONS.down}</button>
+            <button data-act="delimg" data-img="${img.id}" title="Видалити рисунок">${ICONS.trash}</button>
+          </div>` : ''}
+        </figure>`;
+    });
+    return html + '</div>';
+  };
+
+  const refs = doc.bibliography || [];
+  const showRefs = essay || refs.length > 0;
+  const front = essay
+    ? { title: 'Вступ', bind: 'doc|introduction', ph: 'Вступ: актуальність теми, мета реферату', text: doc.introduction }
+    : { title: 'Мета роботи', bind: 'doc|goal', ph: 'Мета роботи', text: doc.goal };
+
+  const toc = [[front.title.toUpperCase(), 1]];
+  doc.sections.forEach((s, i) => {
+    toc.push([`${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`, 1]);
+    s.subsections.forEach((b, j) => toc.push([`${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`, 2]));
+  });
+  toc.push(['ВИСНОВКИ', 1]);
+  if (showRefs) toc.push(['ПЕРЕЛІК ПОСИЛАНЬ', 1]);
+
+  return titlePage + `
       <section class="dv-sheet dv-toc">
         <p class="dv-toc-title">ЗМІСТ</p>
         ${toc.map(([t, l]) => `<p class="dv-toc-row l${l}"><span>${esc(t)}</span><i></i></p>`).join('')}
         <p class="dv-note">Зміст складається автоматично; номери сторінок з'являться в документі (вкладка PDF).</p>
       </section>
-      <section class="dv-sheet dv-body">
-        <h1 class="dv-h">Мета роботи</h1>
-        <div class="dv-text" ${editAttr('doc|goal', 'Мета роботи', 'paras')}>${paras(doc.goal)}</div>
+      <section class="dv-sheet dv-body ${essay ? 'is-essay' : ''}">
+        <h1 class="dv-h">${front.title}</h1>
+        ${textBlock(front.bind, front.ph, front.text)}
         ${doc.sections.map((s, i) => blockHtml(s, i) + s.subsections.map((b, j) => blockHtml(b, i, j)).join('')).join('')}
         ${editable ? `<button class="dv-add" data-act="section">${ICONS.plus} Додати розділ ${doc.sections.length + 1}</button>` : '<div class="dv-add-gap"></div>'}
-        <h1 class="dv-h">Висновки</h1>
-        <div class="dv-text" ${editAttr('doc|conclusion', 'Висновки (можна згенерувати в редакторі)', 'paras')}>${paras(doc.conclusion)}</div>
+        ${pagebreak}
+        <h1 class="dv-h" id="dv-conclusion">Висновки</h1>
+        ${textBlock('doc|conclusion', 'Висновки (можна згенерувати в редакторі)', doc.conclusion)}
+        ${showRefs ? `${pagebreak}
+        <h1 class="dv-h" id="dv-refs">Перелік посилань</h1>
+        <div class="dv-text dv-refs" ${editAttr('doc|bibliography', 'Джерела — кожне з нового рядка', 'paras')}>${mathParas(refs.join('\n'))}</div>` : ''}
       </section>`;
-
 }
 
 function markEmptyFields(container) {
@@ -1317,7 +2113,7 @@ async function openPreview(id, title, opts = {}) {
 
   const $ = sel => root.querySelector(sel);
   const status = msg => { $('.pv-status').textContent = msg; };
-  let mode = 'edit', closed = false, changed = false;
+  let mode = 'edit', closed = false, changed = false, editable = !opts.readOnly;
   let doc = null, images = [], pdfView = null;
   const zoom = { edit: { scale: 1, user: false }, pdf: { scale: 1, user: false } };
 
@@ -1346,9 +2142,11 @@ async function openPreview(id, title, opts = {}) {
     saving = (async () => {
       await req('PATCH', `/reports/${id}`, {
         title: doc.title, discipline: doc.discipline, group: doc.group,
-        teacher: doc.teacher, teacher_gender: doc.teacher_gender,
-        student_name: doc.student_name, student_gender: doc.student_gender,
-        goal: doc.goal, conclusion: doc.conclusion, sections: sectionsPayload(doc.sections),
+        teacher: doc.teacher, teacher_gender: doc.teacher_gender, teacher_position: doc.teacher_position,
+        student_name: doc.student_name, student_gender: doc.student_gender, work_date: doc.work_date,
+        faculty: doc.faculty, department: doc.department,
+        goal: doc.goal, introduction: doc.introduction, conclusion: doc.conclusion,
+        bibliography: doc.bibliography, sections: sectionsPayload(doc.sections),
       });
       for (const imgId of captions) {
         const img = images.find(i => i.id === imgId);
@@ -1412,6 +2210,14 @@ async function openPreview(id, title, opts = {}) {
   }
   if (closed) return;
   doc.sections = toEditableSections(doc.sections);
+  doc.bibliography = doc.bibliography || [];
+  // LaTeX mode: the code is the source of truth, so the document here is view-only
+  if (doc.editor_mode === 'latex') editable = false;
+  if (!editable) {
+    $('.pv-edit-only').hidden = true;
+    $('[data-mode="edit"]').innerHTML = `${ICONS.eye} Документ`;
+  }
+  ensureKatex().then(() => { if (!closed) render(); }).catch(() => {});
 
   /* ── downloads always reflect the latest edits ── */
   root.querySelectorAll('[data-dl]').forEach(b => b.onclick = async () => {
@@ -1433,7 +2239,8 @@ async function openPreview(id, title, opts = {}) {
 
   function statusText() {
     return mode === 'edit'
-      ? 'Клацніть по тексту, щоб редагувати · зміни зберігаються самі'
+      ? (editable ? 'Клацніть по тексту, щоб редагувати · зміни зберігаються самі'
+                  : 'Режим LaTeX: правте код у редакторі, тут — попередній вигляд')
       : pdfView?.pages ? `${pdfView.pages} ${plural(pdfView.pages, 'сторінка', 'сторінки', 'сторінок')} · A4` : '';
   }
 
@@ -1443,7 +2250,7 @@ async function openPreview(id, title, opts = {}) {
     root.querySelectorAll('.pv-stage').forEach(s => s.hidden = s.dataset.mode !== mode);
     $('.pv-outline').hidden = mode !== 'edit';
     $('.pv-thumbs').hidden = mode !== 'pdf' || !pdfView?.pages;
-    $('.pv-edit-only').hidden = mode !== 'edit';
+    $('.pv-edit-only').hidden = mode !== 'edit' || !editable;
     $('.pv-pdf-only').hidden = mode !== 'pdf';
     $('.pv-zoom-val').textContent = `${Math.round(zoom[mode].scale * 100)}%`;
     status(statusText());
@@ -1473,26 +2280,30 @@ async function openPreview(id, title, opts = {}) {
 
   /* ═════════ editable document ═════════ */
   const pages = $('.dv-pages');
+  const itemAt = path => {
+    const [i, j] = String(path).split('.').map(Number);
+    return j === undefined ? doc.sections[i] : doc.sections[i].subsections[j];
+  };
   const getField = bind => {
     const [k, a, b] = bind.split('|');
-    if (k === 'doc') return doc[a];
+    if (k === 'doc') return a === 'bibliography' ? doc.bibliography.join('\n') : doc[a];
     if (k === 'img') return images.find(i => i.id === Number(a))?.caption ?? '';
-    const block = b === undefined ? doc.sections[+a] : doc.sections[+a].subsections[+b];
-    return block?.[k];
+    if (k === 'sec') return itemAt(a)?.title;
+    const blk = itemAt(a)?.blocks[+b];
+    return blk ? blk[blockValueField(blk)] : '';
   };
   const setField = (bind, value) => {
     const [k, a, b] = bind.split('|');
-    if (k === 'doc') { doc[a] = value; return; }
+    if (k === 'doc') { doc[a] = a === 'bibliography' ? docLines(value) : value; return; }
     if (k === 'img') { const img = images.find(i => i.id === Number(a)); if (img) { img.caption = value; dirtyCaptions.add(img.id); } return; }
-    const [field, i, j] = [k, +a, b === undefined ? undefined : +b];
-    const block = j === undefined ? doc.sections[i] : doc.sections[i].subsections[j];
-    block[field] = value;
+    if (k === 'sec') { itemAt(a).title = value; return; }
+    const blk = itemAt(a).blocks[+b];
+    blk[blockValueField(blk)] = value;
   };
-  const blockBind = (field, i, j) => j === undefined ? `${field}|${i}` : `${field}|${i}|${j}`;
 
   function render() {
     const scrollTop = $('.pv-stage[data-mode="edit"]').scrollTop;
-    pages.innerHTML = buildDocSheets(doc, images, { editable: true });
+    pages.innerHTML = buildDocSheets(doc, images, { editable });
     pages.querySelectorAll('[data-bind]').forEach(markEmpty);
     renderOutlineNav();
     $('.pv-stage[data-mode="edit"]').scrollTop = scrollTop;
@@ -1505,7 +2316,7 @@ async function openPreview(id, title, opts = {}) {
   // Only titles affect other places (TOC, outline, listing captions) — refresh those without re-rendering the page
   function refreshDerived() {
     const tocRows = pages.querySelectorAll('.dv-toc-row span');
-    let r = 1;
+    let r = 1;     // row 0 is МЕТА РОБОТИ / ВСТУП
     doc.sections.forEach((s, i) => {
       tocRows[r++].textContent = `${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`;
       s.subsections.forEach((b, j) => { tocRows[r++].textContent = `${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`; });
@@ -1525,11 +2336,12 @@ async function openPreview(id, title, opts = {}) {
       `<button class="pvo-item ${cls}" data-target="${target}"><span>${esc(label)}</span></button>`;
     nav.innerHTML = `<p class="pvo-head">Зміст</p>`
       + item('Титульна сторінка', '.dv-title')
-      + item('Мета роботи', '.dv-body')
+      + item(doc.kind === 'essay' ? 'Вступ' : 'Мета роботи', '.dv-body')
       + doc.sections.map((s, i) => item(`${i + 1} ${s.title.trim() || 'Без назви'}`, `#dv-${i}`)
           + s.subsections.map((b, j) => item(`${i + 1}.${j + 1} ${b.title.trim() || 'Без назви'}`, `#dv-${i}-${j}`, 'sub')).join('')).join('')
-      + item('Висновки', '.dv-add')
-      + `<button class="btn btn-secondary btn-sm pvo-add" data-act="section">${ICONS.plus} Розділ</button>`;
+      + item('Висновки', '#dv-conclusion')
+      + (pages.querySelector('#dv-refs') ? item('Перелік посилань', '#dv-refs') : '')
+      + (editable ? `<button class="btn btn-secondary btn-sm pvo-add" data-act="section">${ICONS.plus} Розділ</button>` : '');
     nav.querySelectorAll('.pvo-item').forEach(b => b.onclick = () =>
       pages.querySelector(b.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
@@ -1545,7 +2357,11 @@ async function openPreview(id, title, opts = {}) {
       : el.textContent.replace(/\s+/g, ' ').trim();
     setField(el.dataset.bind, value);
     markEmpty(el);
-    if (el.dataset.bind.startsWith('title|')) refreshDerived();
+    if (el.dataset.bind.startsWith('sec|')) refreshDerived();
+    // a formula's source changed: redraw it right away
+    const f = el.closest('.dv-formula');
+    if (f) f.querySelector('.dv-f-math').innerHTML = mathHtml(value, true) || '<span class="dv-f-empty">формула</span>';
+    if (el.dataset.bind === 'doc|student_name') render();
     if (el.dataset.bind === 'doc|title') $('.pv-name').textContent = value || 'Без назви';
     touch();
   });
@@ -1564,21 +2380,37 @@ async function openPreview(id, title, opts = {}) {
     if (el.dataset.kind === 'line') text = text.replace(/\s+/g, ' ');
     document.execCommand('insertText', false, text);
   });
+  // Paragraphs with $...$ show rendered formulas; while editing, the raw text is shown instead
+  pages.addEventListener('focusin', e => {
+    const el = e.target.closest?.('[data-kind="paras"]');
+    if (!el?.classList.contains('has-math')) return;
+    el.innerHTML = paras(getField(el.dataset.bind));
+    // the swap removed the node the click put the caret in — put it at the end instead
+    const range = document.createRange();
+    range.selectNodeContents(el.lastElementChild || el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
   // An empty paragraph block must keep one <p>, or the browser starts typing into a bare text node
   pages.addEventListener('focusout', e => {
     const el = e.target.closest?.('[data-kind="paras"]');
-    if (el && !el.querySelector('p')) el.innerHTML = paras(getField(el.dataset.bind));
+    if (!el) return;
+    const value = getField(el.dataset.bind) || '';
+    const math = hasInlineMath(value);
+    el.classList.toggle('has-math', math);
+    if (math) el.innerHTML = mathParas(value);
+    else if (!el.querySelector('p')) el.innerHTML = paras(value);
   });
 
   /* structure buttons */
   root.addEventListener('click', async e => {
     const g = e.target.closest('.dv-gender');
     if (g) {
-      const key = g.dataset.gender === 'student' ? 'student_gender' : 'teacher_gender';
+      const key = `${g.dataset.gender}_gender`;
       doc[key] = doc[key] === 'f' ? 'm' : 'f';
-      g.textContent = g.dataset.gender === 'student'
-        ? (doc[key] === 'f' ? 'Виконала:' : 'Виконав:')
-        : (doc[key] === 'm' ? 'Прийняв:' : 'Прийняла:');
+      g.textContent = doc[key] === 'f' ? g.dataset.f : g.dataset.m;
       touch();
       return;
     }
@@ -1586,23 +2418,27 @@ async function openPreview(id, title, opts = {}) {
     if (!btn) return;
     const act = btn.dataset.act;
     const [i, j] = (btn.dataset.path || '').split('.').map(Number);
-    const block = btn.dataset.path ? (Number.isNaN(j) || j === undefined ? doc.sections[i] : doc.sections[i].subsections[j]) : null;
+    const block = btn.dataset.path ? itemAt(btn.dataset.path) : null;
     const isSub = j !== undefined && !Number.isNaN(j);
 
     if (act === 'section') {
-      doc.sections.push({ ...newBlock(), subsections: [] });
+      doc.sections.push(newItem(true));
       touch(); render();
-      focusBind(`title|${doc.sections.length - 1}`);
+      focusBind(`sec|${doc.sections.length - 1}`);
     } else if (act === 'sub') {
-      doc.sections[i].subsections.push(newBlock());
+      doc.sections[i].subsections.push(newItem(false));
       touch(); render();
-      focusBind(`title|${i}|${doc.sections[i].subsections.length - 1}`);
-    } else if (act === 'code') {
-      block.code = ' ';
-      render();
-      const pre = pages.querySelector(`[data-bind="${blockBind('code', i, isSub ? j : undefined)}"]`);
-      pre.textContent = ''; block.code = ''; markEmpty(pre);
-      pre.focus();
+      focusBind(`sec|${i}.${doc.sections[i].subsections.length - 1}`);
+    } else if (act === 'addtext' || act === 'addcode' || act === 'addformula') {
+      block.blocks.push({ addtext: newTextBlock, addcode: newCodeBlock, addformula: newFormulaBlock }[act]());
+      touch(); render();
+      focusBind(`blk|${btn.dataset.path}|${block.blocks.length - 1}`);
+    } else if (act === 'blkdel') {
+      const k = Number(btn.dataset.k);
+      if (blockFilled(block.blocks[k]) && !confirm('Видалити цей блок?')) return;
+      block.blocks.splice(k, 1);
+      if (!block.blocks.length) block.blocks.push(newTextBlock());
+      touch(); render();
     } else if (act === 'del') {
       const label = isSub ? `підрозділ ${i + 1}.${j + 1}` : `розділ ${i + 1}`;
       if (hasContent(block) && !confirm(`Видалити ${label} разом із вмістом і рисунками?`)) return;

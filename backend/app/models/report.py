@@ -1,12 +1,14 @@
 from sqlmodel import SQLModel, Field
 from datetime import datetime, timezone
 from typing import Any, Optional
-from sqlalchemy import Column, LargeBinary
+from sqlalchemy import Column, LargeBinary, Text
 from sqlalchemy.dialects.postgresql import JSON
 
 class Report(SQLModel,table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
+    # "lab" — лабораторна / практична, "essay" — реферат (other title page and structure)
+    kind: str = Field(default="lab", max_length=8)
     title :str
     discipline: str
     teacher : str
@@ -15,9 +17,20 @@ class Report(SQLModel,table = True):
     student_name: str = Field(default="")
     student_gender: str = Field(default="m", max_length=1)
     group: str
+    faculty: str = Field(default="")
+    department: str = Field(default="")
+    teacher_position: str = Field(default="")
+    work_date: str = Field(default="")
     goal: str
+    introduction: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Each section / subsection: {title, blocks: [{type: text|code|formula, ...}], subsections}
     sections: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     conclusion : Optional[str] = None
+    bibliography: Optional[Any] = Field(default=None, sa_column=Column(JSON))
+    # "latex": the content is edited as LaTeX; latex_source is kept verbatim and
+    # sections / conclusion / ... are parsed from it on every save
+    editor_mode: str = Field(default="form", max_length=8)
+    latex_source: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

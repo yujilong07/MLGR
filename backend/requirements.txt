@@ -20,6 +20,11 @@ pytest-asyncio
 httpx
 pydantic-settings
 Pillow
+# formulas: LaTeX -> MathML -> Word OMML (.docx), LaTeX -> SVG (PDF), Python -> LaTeX
+latex2mathml>=3.77,<4
+mathml2omml==0.0.2
+ziamath>=0.13,<0.14
+latexify-py>=0.4.4,<0.5
 slowapi
 email-validator
 aiofiles

@@ -3,6 +3,7 @@ import time
 import structlog
 from openai import OpenAI
 from app.config import settings
+from app.services.content import item_blocks, strip_inline_math
 
 client = OpenAI(
     api_key=settings.groq_api_key,
@@ -20,24 +21,42 @@ _LANG_RULE = (
 )
 
 
-def generate_introduction(goal: str) -> str:
+_ESSAY_INTRO_PROMPT = (
+    "Ти досвідчений викладач, який допомагає написати розділ «Вступ» до студентського реферату. "
+    "Тобі дають тему, дисципліну та назви розділів (і, можливо, їхній зміст). "
+    "Напиши 2–3 абзаци (120–220 слів): актуальність теми, мета реферату та коротко — які питання "
+    "розглянуто в розділах. Не вигадуй фактів, чисел і джерел, яких немає у матеріалі. "
+    "Безособова форма, академічний стиль. Не додавай заголовок «Вступ». "
+    + _LANG_RULE
+)
+
+
+def generate_introduction(goal: str, essay_context: str | None = None) -> str:
+    """Lab: a short introduction from the goal. Essay: the ВСТУП section from the topic and outline."""
     t0 = time.perf_counter()
-    logger.info("ai_request_start", fn="generate_introduction", model=_MODEL)
+    logger.info("ai_request_start", fn="generate_introduction", model=_MODEL, essay=bool(essay_context))
+    if essay_context:
+        messages = [
+            {"role": "system", "content": _ESSAY_INTRO_PROMPT},
+            {"role": "user", "content": essay_context},
+        ]
+    else:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Ти асистент який пише вступ до лабораторної роботи на основі її мети. "
+                    "Напиши один короткий абзац вступу. "
+                    + _LANG_RULE
+                ),
+            },
+            {"role": "user", "content": f"Мета роботи: {goal}"},
+        ]
     try:
         response = client.chat.completions.create(
             model=_MODEL,
             temperature=0.3,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Ти асистент який пише вступ до лабораторної роботи на основі її мети. "
-                        "Напиши один короткий абзац вступу. "
-                        + _LANG_RULE
-                    ),
-                },
-                {"role": "user", "content": f"Мета роботи: {goal}"},
-            ]
+            messages=messages,
         )
         logger.info(
             "ai_request_done",
@@ -45,7 +64,7 @@ def generate_introduction(goal: str) -> str:
             elapsed_ms=round((time.perf_counter() - t0) * 1000),
             total_tokens=response.usage.total_tokens,
         )
-        return response.choices[0].message.content
+        return _strip_markdown(response.choices[0].message.content)
     except Exception:
         logger.error(
             "ai_request_failed",
@@ -133,11 +152,16 @@ def _strip_markdown(text):
 
 
 def _report_header(report) -> str:
-    return "\n".join([
+    lines = [
+        f"Тип роботи: {'реферат' if getattr(report, 'kind', 'lab') == 'essay' else 'лабораторна / практична робота'}",
         f"Тема роботи: {report.title}",
         f"Дисципліна: {report.discipline}",
-        f"Мета роботи: {report.goal}",
-    ])
+    ]
+    if (report.goal or "").strip():
+        lines.append(f"Мета роботи: {report.goal}")
+    if (getattr(report, "introduction", None) or "").strip():
+        lines.append(f"Вступ: {strip_inline_math(report.introduction)}")
+    return "\n".join(lines)
 
 
 def report_section_blocks(report) -> list[str]:
@@ -149,13 +173,16 @@ def report_section_blocks(report) -> list[str]:
     def block(number, item, path):
         title = (item.get("title") or "").strip() or "(без назви)"
         lines = [f"\n{number} {title}"]
-        if (item.get("text") or "").strip():
-            lines.append(item["text"].strip())
-        code = (item.get("code") or "").strip()
-        if code:
-            if len(code) > _MAX_CODE_CHARS:
-                code = code[:_MAX_CODE_CHARS] + "\n... (код скорочено)"
-            lines.append(f"Код ({item.get('language') or 'code'}):\n{code}")
+        for b in item_blocks(item):
+            if b["type"] == "text" and (b.get("text") or "").strip():
+                lines.append(strip_inline_math(b["text"].strip()))
+            elif b["type"] == "formula" and (b.get("latex") or "").strip():
+                lines.append(f"Формула (LaTeX): {b['latex'].strip()}")
+            elif b["type"] == "code" and (b.get("code") or "").strip():
+                code = b["code"].strip()
+                if len(code) > _MAX_CODE_CHARS:
+                    code = code[:_MAX_CODE_CHARS] + "\n... (код скорочено)"
+                lines.append(f"Код ({b.get('language') or 'code'}):\n{code}")
         for caption in images_by_path.get(path, []):
             lines.append(f"Рисунок: {caption}")
         return "\n".join(lines)

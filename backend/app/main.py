@@ -15,6 +15,7 @@ from app.routes.auth import auth_router
 from app.routes.reports import reports_router
 from app.routes.generate import generate_router
 from app.routes.upload import upload_router
+from app.routes.latex import latex_router
 from app.limiter import limiter
 from app.database import get_session
 from app.models.report import ReportImage
@@ -70,6 +71,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(reports_router, prefix="/reports", tags=["report"])
 app.include_router(generate_router, tags=["generate"])
 app.include_router(upload_router, tags=["upload"])
+app.include_router(latex_router, tags=["latex"])
 
 import os
 UPLOADS_DIR   = os.getenv("UPLOADS_DIR",   "/tmp/uploads")

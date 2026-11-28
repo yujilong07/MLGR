@@ -8,24 +8,15 @@ from app.models.user import User
 from app.schemas.report import ReportCreate, ReportUpdate, ReportResponse
 from app.services.auth_service import get_current_user
 from app.services.image_store import delete_image as remove_image, is_available, ordered, save_image
+from app.services.latex_doc import parse_latex_body
+
+UNPLACED = "u"
 
 reports_router = APIRouter()
 
 @reports_router.post('', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 async def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
-    new_report = Report(
-        user_id=current_user.id,
-        title=report_data.title,
-        discipline=report_data.discipline,
-        teacher=report_data.teacher,
-        teacher_gender=report_data.teacher_gender,
-        student_name=report_data.student_name,
-        student_gender=report_data.student_gender,
-        group=report_data.group,
-        goal=report_data.goal,
-        sections=report_data.sections,
-        conclusion=report_data.conclusion
-    )
+    new_report = Report(user_id=current_user.id, **report_data.model_dump())
     session.add(new_report)
     session.commit()
     session.refresh(new_report)
@@ -51,11 +42,43 @@ async def update_report_by_id(id: int, report_data: ReportUpdate, current_user: 
     update_fields = report_data.model_dump(exclude_unset=True)
     for field, value in update_fields.items():
         setattr(report, field, value)
+
+    warnings = []
+    if report.editor_mode == "latex" and "latex_source" in update_fields:
+        # LaTeX mode: the source is the truth — the structure the documents are built from follows it
+        warnings = _apply_latex(session, report)
+    if update_fields.get("editor_mode") == "form":
+        report.latex_source = None
+
     from datetime import datetime, timezone
     report.updated_at = datetime.now(timezone.utc)
     session.commit()
     session.refresh(report)
-    return report
+    return ReportResponse.model_validate(report).model_copy(update={"latex_warnings": warnings})
+
+
+def _apply_latex(session: Session, report: Report) -> list[str]:
+    images = session.exec(select(ReportImage).where(ReportImage.report_id == report.id)).all()
+    parsed = parse_latex_body(report.latex_source or "", report.kind, {img.id for img in images})
+    report.sections = parsed["sections"]
+    report.conclusion = parsed["conclusion"]
+    report.bibliography = parsed["bibliography"]
+    if report.kind == "essay":
+        report.introduction = parsed["introduction"]
+    else:
+        report.goal = parsed["goal"]
+    placed = {f["image_id"]: f for f in parsed["figures"]}
+    for img in images:
+        fig = placed.get(img.id)
+        if fig:
+            img.section_path, img.position = fig["section_path"], fig["position"]
+            if fig["caption"] is not None:
+                img.caption = fig["caption"]
+        else:
+            # Not referenced in the source: kept, but stays out of the document
+            img.section_path = UNPLACED
+        session.add(img)
+    return parsed["warnings"]
 
 @reports_router.delete('/{id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
@@ -87,7 +110,8 @@ async def upload_image(
 class ImageUpdate(BaseModel):
     caption: Optional[str] = None
     # moves the image when sections are deleted or reordered: "0" / "0.1"
-    section_path: Optional[str] = Field(default=None, pattern=r"^\d+(\.\d+)?$")
+    # "u" — uploaded but not placed in any section (LaTeX mode); not in the document
+    section_path: Optional[str] = Field(default=None, pattern=r"^(\d+(\.\d+)?|u)$")
     position: Optional[int] = Field(default=None, ge=0)
 
 

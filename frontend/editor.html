@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 <div class="app-layout">
@@ -48,10 +48,20 @@
     <div class="page-hdr">
       <div>
         <h1 id="editor-heading">Новий звіт</h1>
-        <p class="page-subtitle">Титулка, зміст і нумерація складуться автоматично</p>
+        <div class="kind-row">
+          <div class="seg seg-lg" role="radiogroup" aria-label="Тип роботи" id="kind-seg">
+            <button type="button" data-kind="lab" role="radio">Лабораторна / практична</button>
+            <button type="button" data-kind="essay" role="radio">Реферат</button>
+          </div>
+          <p class="page-subtitle" id="kind-hint">Титулка, зміст і нумерація складуться автоматично</p>
+        </div>
       </div>
-      <div class="flex gap-8">
+      <div class="flex gap-8 hdr-actions">
         <button id="btn-save" class="btn btn-ghost">Зберегти</button>
+        <button id="btn-tex" class="btn btn-ghost" title="Архів .tex з рисунками — для Overleaf">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+          .tex
+        </button>
         <button id="btn-generate" class="btn btn-secondary">
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
           .docx
@@ -79,8 +89,18 @@
           </div>
           <div class="panel-body">
             <div class="form-group">
-              <label for="f-title">Назва роботи</label>
+              <label for="f-title" id="lbl-title">Назва роботи</label>
               <input id="f-title" type="text" placeholder="Лабораторна робота №1. Дослідження алгоритмів сортування">
+            </div>
+            <div class="form-row">
+              <div class="form-group essay-only">
+                <label for="f-faculty">Факультет</label>
+                <input id="f-faculty" type="text" placeholder="Комп’ютерних наук">
+              </div>
+              <div class="form-group">
+                <label for="f-department">Кафедра <span class="text-muted">— на титулці</span></label>
+                <input id="f-department" type="text" placeholder="штучного інтелекту">
+              </div>
             </div>
             <div class="form-row">
               <div class="form-group">
@@ -94,9 +114,9 @@
             </div>
             <div class="form-row people-row">
               <div class="form-group">
-                <label for="f-student">Студент</label>
+                <label for="f-student">Студент <span class="text-muted">— кілька: кожен з нового рядка</span></label>
                 <div class="person-field">
-                  <input id="f-student" type="text" placeholder="Петренко О. О.">
+                  <textarea id="f-student" rows="1" class="one-line" placeholder="Петренко О. О."></textarea>
                   <div class="seg" role="radiogroup" aria-label="Стать студента" data-gender="student">
                     <button type="button" data-g="m" role="radio">Виконав</button>
                     <button type="button" data-g="f" role="radio">Виконала</button>
@@ -108,33 +128,72 @@
                 <div class="person-field">
                   <input id="f-teacher" type="text" placeholder="Іваненко І. І.">
                   <div class="seg" role="radiogroup" aria-label="Стать викладача" data-gender="teacher">
-                    <button type="button" data-g="m" role="radio">Прийняв</button>
-                    <button type="button" data-g="f" role="radio">Прийняла</button>
+                    <button type="button" data-g="m" role="radio" data-lab="Прийняв" data-essay="Перевірив">Прийняв</button>
+                    <button type="button" data-g="f" role="radio" data-lab="Прийняла" data-essay="Перевірила">Прийняла</button>
                   </div>
                 </div>
               </div>
             </div>
-            <div class="form-group">
+            <div class="form-row essay-only">
+              <div class="form-group">
+                <label for="f-position">Посада викладача</label>
+                <input id="f-position" type="text" placeholder="ас. каф. ШІ">
+              </div>
+              <div class="form-group">
+                <label for="f-date">Дата на титулці</label>
+                <input id="f-date" type="text" placeholder="13.10.2025">
+              </div>
+            </div>
+            <div class="form-group lab-only form-only">
               <label for="f-goal">Мета роботи</label>
               <textarea id="f-goal" rows="3" placeholder="Дослідити…"></textarea>
+            </div>
+            <div class="form-group essay-only form-only">
+              <div class="label-row">
+                <label for="f-intro">Вступ</label>
+                <button id="btn-intro" class="btn btn-ghost btn-sm" type="button" title="Чернетка вступу з теми й розділів">
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2z"/></svg>
+                  Написати чернетку
+                </button>
+              </div>
+              <textarea id="f-intro" rows="4" placeholder="Актуальність теми, мета реферату, що розглянуто. Формули в тексті — $x^2$."></textarea>
             </div>
           </div>
         </section>
 
         <section class="card">
           <div class="panel-head">
-            <h2 class="panel-title">Розділи</h2>
-            <button id="btn-add-sec" class="btn btn-secondary btn-sm">
-              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-              Розділ
-            </button>
+            <h2 class="panel-title" id="content-title">Розділи</h2>
+            <div class="flex gap-8">
+              <div class="seg" role="radiogroup" aria-label="Режим редагування" id="mode-seg">
+                <button type="button" data-mode="form" role="radio" title="Поля й блоки">Форма</button>
+                <button type="button" data-mode="latex" role="radio" title="Увесь вміст як LaTeX">LaTeX</button>
+              </div>
+              <button id="btn-add-sec" class="btn btn-secondary btn-sm form-only">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                Розділ
+              </button>
+            </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body form-only">
             <div id="sections-container" class="form-stack"></div>
             <button id="btn-add-sec-bottom" class="btn btn-ghost btn-sm add-sec-bottom">
               <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
               Додати розділ
             </button>
+            <div id="unplaced" class="unplaced hidden"></div>
+          </div>
+          <div class="panel-body latex-only" id="latex-pane"></div>
+        </section>
+
+        <section class="card form-only" id="refs-card">
+          <div class="panel-head">
+            <h2 class="panel-title">Перелік посилань</h2>
+            <span class="badge" id="refs-badge">необов’язково</span>
+          </div>
+          <div class="panel-body">
+            <p class="text-sm text-muted">Кожне джерело з нового рядка — номери поставляться самі. У тексті посилайтеся як [1], [2].</p>
+            <textarea id="f-refs" rows="3" placeholder="Гудфеллоу Я., Бенжіо Й., Курвілль А. Глибоке навчання. – К.: …, 2018. – 652 с."></textarea>
           </div>
         </section>
 
@@ -208,6 +267,6 @@
   </main>
 </div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
