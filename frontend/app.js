@@ -921,6 +921,9 @@ async function initEditor() {
     if (lv && lv !== reportLevel) setLevel(lv);
   });
   document.getElementById('btn-remember')?.addEventListener('click', rememberProfile);
+  const tourBtn = document.getElementById('btn-tour');
+  tourBtn?.addEventListener('click', startTour);
+  tourBtn?.classList.toggle('is-new', tourState() !== 'done');
 
   ['btn-add-sec', 'btn-add-sec-bottom', 'btn-add-sec-side'].forEach(id =>
     document.getElementById(id)?.addEventListener('click', addSection));
@@ -1005,6 +1008,8 @@ async function initEditor() {
     sections = [];
     renderSections();
   }
+  // First time in the editor: offer the tour (it never starts by itself)
+  setTimeout(offerTour, 1200);
 }
 
 function setLevel(level, { quiet = false } = {}) {
@@ -2140,6 +2145,254 @@ async function previewReport() {
 
 function currentTitle() {
   return document.getElementById('f-title')?.value || `Звіт ${reportId}`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   GUIDED TOUR  (editor) — only when the user asks for it:
+   an invite on the first visit, and "Переглянути підказки"
+   in the right panel any time
+═══════════════════════════════════════════════════════ */
+const TOUR_KEY = 'mlgr_tour';                 // null — never answered, 'later', 'done'
+const tourState = () => { try { return localStorage.getItem(TOUR_KEY); } catch { return 'done'; } };
+const setTourState = v => { try { localStorage.setItem(TOUR_KEY, v); } catch { /* private mode */ } };
+
+const LIGHTBULB = '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/></svg>';
+
+// Small looping illustrations inside the tip (pure CSS, see .tour-demo in style.css)
+const TOUR_DEMO = {
+  doc: `<div class="tour-demo demo-doc"><div class="dd-form"><i></i><i></i><i></i></div>
+          <span class="dd-arrow">→</span><div class="dd-sheet"><b></b><i></i><i></i><i></i><i></i></div></div>`,
+  students: `<div class="tour-demo demo-students"><div class="ds-input"><span class="ds-l1">Петренко О. О.</span><span class="ds-l2">Коваль І. І.</span></div>
+          <div class="ds-title"><span class="ds-one">Виконав:</span><span class="ds-many">Виконали:</span></div></div>`,
+  blocks: `<div class="tour-demo demo-blocks"><span class="db db-t1">Текст</span><span class="db db-c">Код</span>
+          <span class="db db-f">Формула</span><span class="db db-t2">Текст</span></div>`,
+  formula: () => `<div class="tour-demo demo-formula"><code>$E = mc^2$</code><span class="df-arrow">→</span>
+          <span class="df-out">${mathHtml('E = mc^2') || 'E = mc²'}</span></div>`,
+  progress: `<div class="tour-demo demo-progress"><div class="dp-bar"><span></span></div><span class="dp-ok">✓</span></div>`,
+  typing: `<div class="tour-demo demo-typing"><span>У ході виконання роботи було…</span></div>`,
+  done: `<div class="tour-demo demo-done"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="23"/><path d="M15 27l7 7 15-15"/></svg></div>`,
+};
+
+function tourSteps() {
+  const visible = sel => [...document.querySelectorAll(sel)].find(el => el.offsetParent !== null) || null;
+  const essay = reportKind === 'essay', school = reportLevel === 'school', latex = editorMode === 'latex';
+  return [
+    { title: 'Зберемо звіт за кілька кроків',
+      body: 'Покажемо, де що заповнювати. Титулку, зміст і нумерацію MLGR складе сам — ваша справа лише вміст.',
+      demo: TOUR_DEMO.doc },
+    { target: '#kind-seg', title: 'Що пишемо',
+      body: 'Лабораторна чи реферат. Від цього залежать титулка й структура: у рефераті — вступ, розділи з нової сторінки й перелік посилань.' },
+    { target: ['#level-seg', '#f-institution'], title: 'Навчальний заклад',
+      body: 'Університет, коледж чи школа — і назва закладу. Почніть вводити, і з’являться підказки; місто підставиться саме.' },
+    { target: '#btn-remember', title: 'Запам’ятайте один раз',
+      body: 'Заклад, група й ПІБ збережуться в «Моїх даних» — і кожен наступний звіт почнеться вже заповненим.' },
+    { target: ['#f-title', '#f-discipline', '#f-group'], title: 'Дані для титулки',
+      body: `Назва роботи, ${school ? 'предмет і клас' : 'дисципліна й група'}. Усе це одразу з’являється на титульній сторінці.` },
+    { target: ['#f-student', '.seg[data-gender="student"]'], title: 'Хто виконав',
+      body: 'Кілька авторів — кожен з нового рядка. Перемикач поруч обирає «Виконав» чи «Виконала»; для кількох буде «Виконали».',
+      demo: TOUR_DEMO.students },
+    { target: () => visible('#f-intro') || visible('#f-goal'), title: essay ? 'Вступ' : 'Мета роботи',
+      body: essay ? 'Вступ можна написати самому або попросити чернетку — кнопка «Написати чернетку» поруч.'
+                  : 'Одне-два речення про те, що досліджуєте. Мета потрапить у документ і допоможе ШІ з висновками.' },
+    { target: () => visible('#sections-container .section-item') || visible('#btn-add-sec'), title: 'Розділи',
+      body: 'Кожен розділ — це заголовок і вміст. Нумерація «1», «1.1» ставиться сама. Додавати розділи можна й з панелі праворуч.' },
+    { target: () => visible('#sections-container .add-bar'), title: 'Текст, код, формула — у будь-якому порядку',
+      body: 'Додавайте блоки скільки треба: текст → код → знову текст. Стрілки ↑ ↓ на блоці змінюють порядок.',
+      demo: TOUR_DEMO.blocks },
+    { target: () => visible('#sections-container .blk-formula') || visible('#sections-container [data-add="formula"]'),
+      title: 'Формули',
+      body: 'У тексті — між доларами: $x^2$. Окрема формула — блок «Формула» з номером (1.1). Кнопка «З Python» перетворить функцію на формулу.',
+      demo: TOUR_DEMO.formula },
+    { target: () => visible('#sections-container .upload-zone'), title: 'Рисунки',
+      body: 'Перетягніть скріншоти — вони стануть «Рисунок 1 – …». Підпис і порядок змінюються на картці, клік відкриває перегляд.' },
+    { target: '#mode-seg', title: latex ? 'Ви в режимі LaTeX' : 'Форма або LaTeX',
+      body: latex ? 'Увесь вміст тут — код LaTeX. Він зберігається сам, а документ збирається з нього так само, як із форми.'
+                  : 'Якщо вам зручніше LaTeX — перемкніться: увесь вміст стане кодом. Кнопка «.tex» угорі дасть архів для Overleaf.' },
+    { target: () => latex ? visible('#latex-pane .tex-toolbar') : null, title: 'Кнопки вставки',
+      body: 'Розділ, формула, код, рисунок — вставляються в місце курсора. Рисунки звіту в коді називаються img-номер.' },
+    { target: '.outline-card .outline', title: 'Структура',
+      body: 'Зміст звіту завжди під рукою: клік переносить до розділу, стрілки змінюють порядок, «+» додає підрозділ.' },
+    { target: '.readiness', title: 'Готовність',
+      body: 'Що ще не заповнено. Клік по пункту переносить до потрібного поля.', demo: TOUR_DEMO.progress },
+    { target: '#btn-conclusion', title: 'Висновки від ШІ',
+      body: 'Модель прочитає саме вашу роботу й напише чернетку. Обов’язково перечитайте її перед здачею.',
+      demo: TOUR_DEMO.typing },
+    { target: () => visible('.live-panel'), title: 'Як виглядатиме',
+      body: 'Документ оновлюється, поки ви пишете, і сам прокручується до розділу, який ви редагуєте.' },
+    { target: ['#btn-preview', '#btn-generate'], title: 'Перегляд і завантаження',
+      body: '«Переглянути» відкриває документ — його можна правити прямо на сторінці, а вкладка PDF показує точний вигляд. Звідти ж — DOCX і PDF.' },
+    { title: 'Готово!', body: 'Підказки завжди можна відкрити знову — кнопка «Переглянути підказки» праворуч.', demo: TOUR_DEMO.done },
+  ];
+}
+
+const tourTargets = target => {
+  const raw = typeof target === 'function' ? [target()] : [].concat(target).map(sel => document.querySelector(sel));
+  return raw.filter(el => el && el.offsetParent !== null);
+};
+
+let tourInstance = null;
+
+function startTour() {
+  closeTourInvite();
+  if (tourInstance) return;
+  const steps = tourSteps().filter(s => !s.target || tourTargets(s.target).length);
+  const root = document.createElement('div');
+  root.className = 'tour';
+  root.innerHTML = `
+    <svg class="tour-shade" aria-hidden="true"><defs><mask id="tour-mask">
+      <rect width="100%" height="100%" fill="#fff"/><rect class="tour-hole" rx="12" fill="#000"/></mask></defs>
+      <rect width="100%" height="100%" mask="url(#tour-mask)"/></svg>
+    <div class="tour-spot"></div>
+    <div class="tour-tip" role="dialog" aria-modal="false" aria-labelledby="tour-title">
+      <span class="tour-arrow"></span>
+      <div class="tour-body"></div>
+      <div class="tour-foot">
+        <span class="tour-count"></span>
+        <div class="tour-progress"><span></span></div>
+        <div class="flex gap-6">
+          <button class="btn btn-ghost btn-sm" data-tour="back">Назад</button>
+          <button class="btn btn-primary btn-sm" data-tour="next">Далі</button>
+        </div>
+      </div>
+      <button class="tour-x pv-icon-btn" data-tour="close" title="Закрити (Esc)">${ICONS.x}</button>
+    </div>`;
+  document.body.appendChild(root);
+  const spot = root.querySelector('.tour-spot'), tip = root.querySelector('.tour-tip');
+  const hole = root.querySelector('.tour-hole');
+  // The dimmed page with a rounded window over the target (an SVG mask: a huge box-shadow
+  // is not painted reliably on wide screens)
+  const setHole = (x, y, w, h) => Object.assign(hole.style, { x: `${x}px`, y: `${y}px`, width: `${w}px`, height: `${h}px` });
+  const arrow = root.querySelector('.tour-arrow');
+  let i = 0, raf = 0, moveTimer = null, alive = true;
+
+  const place = () => {
+    if (!alive) return;
+    const step = steps[i];
+    const els = step.target ? tourTargets(step.target) : [];
+    const vw = window.innerWidth, vh = window.innerHeight, pad = 8, gap = 14;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    if (!els.length) {
+      root.classList.add('centered');
+      setHole(vw / 2, vh / 2, 0, 0);
+      tip.style.left = `${Math.round((vw - tw) / 2)}px`;
+      tip.style.top = `${Math.round((vh - th) / 2)}px`;
+      tip.dataset.side = 'none';
+    } else {
+      root.classList.remove('centered');
+      const rects = els.map(el => el.getBoundingClientRect());
+      const r = {
+        left: Math.min(...rects.map(x => x.left)) - pad, top: Math.min(...rects.map(x => x.top)) - pad,
+        right: Math.max(...rects.map(x => x.right)) + pad, bottom: Math.max(...rects.map(x => x.bottom)) + pad,
+      };
+      Object.assign(spot.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.right - r.left}px`, height: `${r.bottom - r.top}px` });
+      setHole(r.left, r.top, r.right - r.left, r.bottom - r.top);
+      // the side with room for the tip: right, left, below, above
+      const room = { right: vw - r.right, left: r.left, bottom: vh - r.bottom, top: r.top };
+      const side = room.right >= tw + gap + 12 ? 'right' : room.left >= tw + gap + 12 ? 'left'
+                 : room.bottom >= th + gap + 12 ? 'bottom' : room.top >= th + gap + 12 ? 'top' : 'bottom';
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      let x, y;
+      if (side === 'right' || side === 'left') {
+        x = side === 'right' ? r.right + gap : r.left - gap - tw;
+        y = clamp((r.top + r.bottom) / 2 - th / 2, 12, vh - th - 12);
+        arrow.style.top = `${clamp((r.top + r.bottom) / 2 - y, 18, th - 18)}px`;
+        arrow.style.left = '';
+      } else {
+        x = clamp((r.left + r.right) / 2 - tw / 2, 12, vw - tw - 12);
+        y = side === 'bottom' ? Math.min(r.bottom + gap, vh - th - 12) : Math.max(r.top - gap - th, 12);
+        arrow.style.left = `${clamp((r.left + r.right) / 2 - x, 18, tw - 18)}px`;
+        arrow.style.top = '';
+      }
+      tip.dataset.side = side;
+      tip.style.left = `${Math.round(x)}px`;
+      tip.style.top = `${Math.round(y)}px`;
+    }
+    raf = requestAnimationFrame(place);
+  };
+
+  const show = n => {
+    i = Math.max(0, Math.min(steps.length - 1, n));
+    const step = steps[i];
+    root.classList.add('moving');                       // spot glides to the new target
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => root.classList.remove('moving'), 550);
+    tip.classList.remove('in');
+    const demo = typeof step.demo === 'function' ? step.demo() : (step.demo || '');
+    root.querySelector('.tour-body').innerHTML = `
+      ${demo}
+      <h3 id="tour-title">${esc(step.title)}</h3>
+      <p>${esc(step.body)}</p>`;
+    root.querySelector('.tour-count').textContent = `${i + 1} / ${steps.length}`;
+    root.querySelector('.tour-progress span').style.width = `${((i + 1) / steps.length) * 100}%`;
+    root.querySelector('[data-tour="back"]').hidden = i === 0;
+    root.querySelector('[data-tour="next"]').textContent = i === 0 ? 'Почати' : i === steps.length - 1 ? 'Завершити' : 'Далі';
+    const els = step.target ? tourTargets(step.target) : [];
+    els[0]?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    requestAnimationFrame(() => requestAnimationFrame(() => tip.classList.add('in')));
+    root.querySelector('[data-tour="next"]').focus({ preventScroll: true });
+  };
+
+  const close = finished => {
+    alive = false;
+    cancelAnimationFrame(raf);
+    document.removeEventListener('keydown', onKey, true);
+    root.classList.add('out');
+    setTimeout(() => root.remove(), 260);
+    tourInstance = null;
+    setTourState('done');
+    document.getElementById('btn-tour')?.classList.remove('is-new');
+    if (finished) toast('Підказки завжди тут — кнопка «Переглянути підказки» праворуч');
+  };
+  const onKey = e => {
+    if (e.target.matches?.('input, textarea, [contenteditable]')) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(false); }
+    if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); i === steps.length - 1 ? close(true) : show(i + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(i - 1); }
+  };
+  root.addEventListener('click', e => {
+    const act = e.target.closest('[data-tour]')?.dataset.tour;
+    if (act === 'next') i === steps.length - 1 ? close(true) : show(i + 1);
+    if (act === 'back') show(i - 1);
+    if (act === 'close') close(false);
+  });
+  document.addEventListener('keydown', onKey, true);
+  tourInstance = { close };
+  show(0);
+  requestAnimationFrame(() => root.classList.add('in'));
+  place();
+}
+
+/* First visit: offer the tour, never force it */
+function offerTour() {
+  if (tourState() || document.querySelector('.tour-invite')) return;
+  const box = document.createElement('div');
+  box.className = 'tour-invite';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Підказки');
+  box.innerHTML = `
+    <span class="ti-ico">${LIGHTBULB}</span>
+    <div class="ti-text"><b>Вперше тут?</b><span>Покажемо за хвилину, як зібрати звіт — з підсвіткою кожного кроку.</span>
+      <div class="flex gap-8"><button class="btn btn-primary btn-sm" data-ti="go">Показати підказки</button>
+        <button class="btn btn-ghost btn-sm" data-ti="later">Не зараз</button></div></div>
+    <button class="pv-icon-btn ti-x" data-ti="later" title="Закрити">${ICONS.x}</button>`;
+  box.addEventListener('click', e => {
+    const act = e.target.closest('[data-ti]')?.dataset.ti;
+    if (act === 'go') startTour();
+    if (act === 'later') {
+      setTourState('later');
+      closeTourInvite();
+      toast('Добре! Підказки можна відкрити будь-коли — кнопка праворуч');
+    }
+  });
+  document.body.appendChild(box);
+  requestAnimationFrame(() => box.classList.add('in'));
+}
+
+function closeTourInvite() {
+  const box = document.querySelector('.tour-invite');
+  if (!box) return;
+  box.classList.remove('in');
+  setTimeout(() => box.remove(), 250);
 }
 
 /* ═══════════════════════════════════════════════════════
