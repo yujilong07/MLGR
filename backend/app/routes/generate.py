@@ -1,14 +1,15 @@
 import asyncio
-import os
 import hashlib
 import json
+import time
 import structlog
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from openai import RateLimitError
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -22,8 +23,7 @@ from app.services.ai_service import (
     needs_chunking, split_report_parts, summarize_part, condensed_report_context,
 )
 from app.services.cache_service import get_cached, set_cached
-from app.tasks.docx_task import generate_docx_task
-from app.tasks import celery
+from app.services import generation
 from app.limiter import limiter, get_user_email
 
 
@@ -34,14 +34,19 @@ class SectionTextRequest(BaseModel):
 generate_router = APIRouter()
 logger = structlog.get_logger().bind(service="generate")
 
+# Routes are plain `def`: FastAPI runs them in its thread pool, so the (synchronous) database
+# and AI calls never stop the event loop that serves everyone else. Streams poll in threads too.
+# Streaming routes close their session as soon as the route returns (scope="function"),
+# not when the stream ends: otherwise every open stream would hold a database connection.
+
 
 @generate_router.get('/reports/{id}/stream-conclusion')
 @limiter.limit("10/minute", key_func=get_user_email)
-async def stream_conclusion_endpoint(
+def stream_conclusion_endpoint(
     request: Request,
     id: int,
     token: str = Query(...),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     current_user = authenticate_token(token, session)
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
@@ -73,9 +78,9 @@ async def stream_conclusion_endpoint(
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     async def event_stream():
-        cached = get_cached(cache_key)
+        cached = await run_in_threadpool(get_cached, cache_key)
         if cached:
-            save_conclusion(cached)
+            await run_in_threadpool(save_conclusion, cached)
             yield event(token=cached)
             yield event(done=True)
             return
@@ -101,6 +106,10 @@ async def stream_conclusion_endpoint(
             while (chunk := await loop.run_in_executor(None, next, tokens, None)) is not None:
                 full_text += chunk
                 yield event(token=chunk)
+        except RateLimitError:
+            logger.warning("conclusion_rate_limited", report_id=id)
+            yield event(error="Сервіс AI зараз перевантажений — спробуйте ще раз за хвилину.")
+            return
         except Exception:
             logger.error("conclusion_failed", report_id=id, exc_info=True)
             yield event(error="Модель не відповіла. Спробуйте ще раз за хвилину.")
@@ -110,16 +119,16 @@ async def stream_conclusion_endpoint(
             yield event(error="Модель повернула порожню відповідь. Спробуйте ще раз.")
             return
 
-        save_conclusion(full_text)
+        await run_in_threadpool(save_conclusion, full_text)
         yield event(done=True)
-        set_cached(cache_key, full_text, ttl=86400)
+        await run_in_threadpool(set_cached, cache_key, full_text, 86400)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @generate_router.post('/reports/{id}/generate-introduction')
 @limiter.limit("10/minute", key_func=get_user_email)
-async def generate_introduction_endpoint(
+def generate_introduction_endpoint(
     request: Request,
     id: int,
     current_user: User = Depends(get_current_user),
@@ -142,15 +151,14 @@ async def generate_introduction_endpoint(
     if cached:
         return {"introduction": cached}
 
-    loop = asyncio.get_event_loop()
-    text = await loop.run_in_executor(None, lambda: generate_introduction(report.goal, essay_context))
+    text = generate_introduction(report.goal, essay_context)
     set_cached(cache_key, text, ttl=86400)
     return {"introduction": text}
 
 
 @generate_router.post('/reports/{id}/improve-section')
 @limiter.limit("10/minute", key_func=get_user_email)
-async def improve_section_endpoint(
+def improve_section_endpoint(
     request: Request,
     id: int,
     body: SectionTextRequest,
@@ -161,13 +169,13 @@ async def improve_section_endpoint(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    loop = asyncio.get_event_loop()
-    improved = await loop.run_in_executor(None, lambda: improve_section_text(body.text))
-    return {"improved_text": improved}
+    return {"improved_text": improve_section_text(body.text)}
 
 
 @generate_router.post('/reports/{id}/generate')
-async def generate(
+@limiter.limit("20/minute", key_func=get_user_email)
+def generate(
+    request: Request,
     id: int,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -175,33 +183,62 @@ async def generate(
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
+    try:
+        # Queued, returns at once; the editor follows /generate/status
+        job_id = generation.submit(id, current_user.id)
+    except generation.QueueFull:
+        logger.warning("generation_queue_full", report_id=id)
+        raise HTTPException(status_code=503, detail="Сервер зараз дуже завантажений — спробуйте за хвилину",
+                            headers={"Retry-After": "60"})
+    return {"task_id": job_id}
 
-    # In eager mode (Render, no worker) .delay() runs the whole build incl. LibreOffice;
-    # keep it off the event loop so other requests are not blocked meanwhile
-    task = await run_in_threadpool(generate_docx_task.delay, id)
-    return {"task_id": task.id}
+
+_STATUS_MAX_WAIT = 20 * 60
+
+
+def _documents(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "документ"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "документи"
+    return "документів"
+
+
+def _status_message(job: dict, ahead: int) -> str:
+    if job["state"] == generation.QUEUED:
+        return f"У черзі: перед вами {ahead} {_documents(ahead)}…" if ahead else "У черзі — зараз почнемо…"
+    return "Складаємо документ…"
 
 
 @generate_router.get('/reports/{id}/generate/status')
-async def generate_status(
+def generate_status(
     id: int,
     task_id: str,
     token: str = Query(...),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
-    authenticate_token(token, session)
+    current_user = authenticate_token(token, session)
+    job = generation.get_job(task_id)
+    if not job or job.get("user_id") != current_user.id or job.get("report_id") != id:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    def event(**payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     async def event_stream():
+        deadline = time.monotonic() + _STATUS_MAX_WAIT
         while True:
-            result = celery.AsyncResult(task_id)
-            if result.successful():
-                yield f'data: {json.dumps({"status": "done", "progress": 100, "message": "Документ готовий!"})}\n\n'
+            job, ahead = await run_in_threadpool(generation.progress, task_id)
+            if job is None or time.monotonic() > deadline:
+                yield event(status="error", progress=0, message=generation.LOST_MESSAGE)
                 return
-            elif result.failed():
-                yield f'data: {json.dumps({"status": "error", "progress": 0, "message": "Помилка генерації"})}\n\n'
+            if job["state"] == generation.DONE:
+                yield event(status="done", progress=100, message="Документ готовий!")
                 return
-            else:
-                yield f'data: {json.dumps({"status": "pending", "progress": 50, "message": "Генерується..."})}\n\n'
+            if job["state"] == generation.ERROR:
+                yield event(status="error", progress=0, message=job.get("error") or "Помилка генерації")
+                return
+            yield event(status="pending", progress=50, message=_status_message(job, ahead), queue=ahead)
             await asyncio.sleep(1)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -214,7 +251,7 @@ _DOWNLOAD_TYPES = {
 
 
 @generate_router.get('/reports/{id}/download')
-async def download_report(
+def download_report(
     id: int,
     format: str = Query("docx", pattern="^(docx|pdf)$"),
     current_user: User = Depends(get_current_user),
@@ -224,9 +261,12 @@ async def download_report(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    path = os.path.join(os.getenv("GENERATED_DIR", "/app/generated"), f'report_{id}.{format}')
-    if not os.path.exists(path):
-        detail = "PDF is not available on this server" if format == "pdf" else "Not found"
-        raise HTTPException(status_code=404, detail=detail)
-
-    return FileResponse(path, filename=f"report_{id}.{format}", media_type=_DOWNLOAD_TYPES[format])
+    path, data = generation.load_file(session, id, format)
+    filename = f"report_{id}.{format}"
+    if path:
+        return FileResponse(path, filename=filename, media_type=_DOWNLOAD_TYPES[format])
+    if data is not None:
+        return Response(data, media_type=_DOWNLOAD_TYPES[format],
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    detail = "PDF is not available on this server" if format == "pdf" else "Not found"
+    raise HTTPException(status_code=404, detail=detail)

@@ -1,44 +1,11 @@
-import os
-
-import structlog
 from app.tasks import celery
-from app.database import engine
-from sqlmodel import Session, select
-from app.models.report import Report, ReportImage
-from app.services.docx_builder import build_report_docx, apply_toc_pages
-from app.services.pdf_builder import build_report_pdf
-from app.services.image_store import ensure_all_local
-
-logger = structlog.get_logger().bind(service="docx_task")
+from app.services import generation
 
 
 @celery.task
-def generate_docx_task(report_id: int):
-    logger.info("docx_task_started", report_id=report_id)
-    try:
-        with Session(engine) as session:
-            report = session.exec(select(Report).where(Report.id == report_id)).first()
-            if not report:
-                logger.warning("docx_task_report_not_found", report_id=report_id)
-                return None
-            # Files may be gone from disk after a restart — restore them from the database first
-            images = ensure_all_local(session, session.exec(
-                select(ReportImage).where(ReportImage.report_id == report_id)).all())
-            path = build_report_docx(report, images=images)
-
-            # PDF for preview/download. Its layout also gives the real TOC page numbers,
-            # which go back into the .docx. A failure here must not cost the user the .docx.
-            stale_pdf = os.path.splitext(path)[0] + ".pdf"
-            if os.path.exists(stale_pdf):
-                os.remove(stale_pdf)
-            try:
-                _, pages = build_report_pdf(report, images=images)
-                apply_toc_pages(path, pages)
-            except Exception:
-                logger.warning("pdf_render_failed", report_id=report_id, exc_info=True)
-
-        logger.info("docx_task_completed", report_id=report_id, path=path)
-        return path
-    except Exception:
-        logger.error("docx_task_failed", report_id=report_id, exc_info=True)
-        raise
+def generate_docx_task(report_id: int, job_id: str | None = None):
+    """Runs on the Celery worker. With CELERY_TASK_ALWAYS_EAGER (no worker) the web process
+    builds in its own limited pool instead (services/generation.py)."""
+    if job_id:
+        return generation.run_job(job_id, report_id)
+    return generation.build_documents(report_id)

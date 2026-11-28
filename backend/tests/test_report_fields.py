@@ -99,20 +99,24 @@ def test_image_survives_wiped_disk(client, auth_headers, report_id, uploads_tmp)
     assert r.content.startswith(b"\x89PNG")
 
 
-def test_docx_task_restores_images(client, auth_headers, report_id, uploads_tmp, session, tmp_path, monkeypatch):
+def test_docx_build_restores_images(client, auth_headers, report_id, uploads_tmp, engine, tmp_path, monkeypatch):
+    import io
     from unittest.mock import patch
-    from app.tasks.docx_task import generate_docx_task
+    from docx import Document
+    from sqlmodel import Session
+    from app.models.report import GeneratedFile
+    from app.services import generation
     monkeypatch.setenv("GENERATED_DIR", str(tmp_path / "gen"))
     client.patch(f"/reports/{report_id}", headers=auth_headers, json={"sections": [{"title": "A", "text": "t"}]})
     _upload(client, auth_headers, report_id)
     for f in uploads_tmp.iterdir():
         f.unlink()
-    with patch("app.tasks.docx_task.Session", return_value=session), \
-         patch("app.tasks.docx_task.build_report_pdf", side_effect=RuntimeError("no pdf")), \
-         patch.object(session, "close"):
-        path = generate_docx_task(report_id)
-    from docx import Document
-    assert len(Document(path).inline_shapes) == 1
+    with patch.object(generation, "engine", engine), \
+         patch.object(generation, "build_report_pdf", side_effect=RuntimeError("no pdf")):
+        assert generation.build_documents(report_id)
+    with Session(engine) as session:
+        data = session.get(GeneratedFile, (report_id, "docx")).data
+    assert len(Document(io.BytesIO(data)).inline_shapes) == 1
 
 
 def test_big_image_is_downscaled(client, auth_headers, report_id):

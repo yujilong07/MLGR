@@ -285,7 +285,7 @@ def build_report_html(report, images=None, student_name=""):
     )
 
 
-def build_report_pdf(report, images=None, student_name=""):
+def build_report_pdf(report, images=None, student_name="", out_dir=None):
     """Returns (pdf_path, {toc_bookmark: page}) — pages are taken from the actual layout."""
     from weasyprint import HTML  # imported lazily: needs Pango from the system
 
@@ -299,7 +299,7 @@ def build_report_pdf(report, images=None, student_name=""):
             if anchor.startswith('_Toc'):
                 pages.setdefault(anchor, number)
 
-    output_dir = os.getenv("GENERATED_DIR", "/app/generated")
+    output_dir = out_dir or os.getenv("GENERATED_DIR", "/app/generated")
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, f"report_{report.id}.pdf")
     document.write_pdf(path)

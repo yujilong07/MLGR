@@ -1,7 +1,7 @@
 import os
 import time
 import structlog
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from app.config import settings
 from app.services.content import (
     APPENDIX_LETTERS, children, item_blocks, main_and_appendices, strip_inline_math, table_rows,
@@ -11,13 +11,31 @@ _MAX_TABLE_ROWS = 25
 
 client = OpenAI(
     api_key=settings.groq_api_key,
-    base_url="https://api.groq.com/openai/v1"
+    base_url="https://api.groq.com/openai/v1",
+    # 429 / 5xx / dropped connections are retried with backoff (honouring Retry-After)
+    max_retries=int(os.getenv("AI_MAX_RETRIES", "3")),
+    timeout=float(os.getenv("AI_TIMEOUT_SECONDS", "120")),
 )
 
 logger = structlog.get_logger().bind(service="ai")
 
 # Groq retires models periodically: list available ones via GET /openai/v1/models
 _MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+# Groq limits every model separately. When the main model's limit is used up, requests go to
+# this one (same family: same parameters such as reasoning_effort). Empty = no fallback.
+_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+
+
+def _complete(retries: int | None = None, **kwargs):
+    """chat.completions.create on the main model, on the fallback one when the main model is rate limited."""
+    api = client if retries is None else client.with_options(max_retries=retries)
+    try:
+        return api.chat.completions.create(model=_MODEL, **kwargs)
+    except RateLimitError:
+        if not _FALLBACK_MODEL or _FALLBACK_MODEL == _MODEL:
+            raise
+        logger.warning("ai_rate_limited", model=_MODEL, fallback=_FALLBACK_MODEL)
+        return api.chat.completions.create(model=_FALLBACK_MODEL, **kwargs)
 _LANG_RULE = (
     "Відповідай ВИКЛЮЧНО українською мовою. Не використовуй жодних слів іншими мовами. "
     # Text goes straight into a .docx, so markdown symbols would show up literally
@@ -60,8 +78,7 @@ def generate_introduction(goal: str, essay_context: str | None = None) -> str:
             {"role": "user", "content": f"Мета роботи: {goal}"},
         ]
     try:
-        response = client.chat.completions.create(
-            model=_MODEL,
+        response = _complete(
             temperature=0.3,
             messages=messages,
         )
@@ -86,8 +103,7 @@ def improve_section_text(text: str) -> str:
     t0 = time.perf_counter()
     logger.info("ai_request_start", fn="improve_section_text", model=_MODEL)
     try:
-        response = client.chat.completions.create(
-            model=_MODEL,
+        response = _complete(
             temperature=0.3,
             messages=[
                 {
@@ -278,8 +294,8 @@ def summarize_part(report, part_text: str, index: int, total: int) -> str:
     t0 = time.perf_counter()
     logger.info("ai_request_start", fn="summarize_part", part=index, total=total, model=_MODEL)
     try:
-        response = client.with_options(max_retries=4).chat.completions.create(
-            model=_MODEL,
+        response = _complete(
+            retries=4,
             temperature=0.2,
             reasoning_effort="low",
             messages=[
@@ -314,8 +330,7 @@ def condensed_report_context(report, summaries: list[str]) -> str:
 
 
 def _conclusion_stream(report_context: str, effort: str):
-    response = client.chat.completions.create(
-        model=_MODEL,
+    response = _complete(
         temperature=0.2,
         reasoning_effort=effort,
         messages=[

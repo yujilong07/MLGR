@@ -668,7 +668,7 @@ def apply_toc_pages(docx_path, pages):
     document.save(docx_path)
 
 
-def build_report_docx(report, images=None, student_name=""):
+def build_report_docx(report, images=None, student_name="", out_dir=None):
     style = doc_style(report)
     spaced = style.spaced_blocks
     document = create_base_doc(style)
@@ -725,7 +725,7 @@ def build_report_docx(report, images=None, student_name=""):
 
     fill_table_of_contents(toc_placeholder, toc_headings)
 
-    output_dir = os.getenv("GENERATED_DIR", "/app/generated")
+    output_dir = out_dir or os.getenv("GENERATED_DIR", "/app/generated")
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, f"report_{report.id}.docx")
     document.save(path)

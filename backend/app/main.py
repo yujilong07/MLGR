@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from openai import APIConnectionError, APIStatusError, RateLimitError
+from sqlalchemy import text
 from sqlmodel import Session, select
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +22,7 @@ from app.limiter import limiter
 from app.database import get_session
 from app.models.report import ReportImage
 from app.services.image_store import ensure_local, local_path
+from app.services import cache_service
 import structlog
 
 logger = structlog.get_logger().bind(service="app")
@@ -54,6 +57,20 @@ app.add_middleware(StripApiPrefix)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RateLimitError)
+async def ai_rate_limited_handler(request: Request, exc: RateLimitError):
+    logger.warning("ai_rate_limited", path=str(request.url.path))
+    return JSONResponse(status_code=503, headers={"Retry-After": "60"},
+                        content={"detail": "Сервіс AI зараз перевантажений — спробуйте за хвилину"})
+
+
+@app.exception_handler(APIConnectionError)
+@app.exception_handler(APIStatusError)
+async def ai_unavailable_handler(request: Request, exc: Exception):
+    logger.error("ai_unavailable", path=str(request.url.path), error=type(exc).__name__)
+    return JSONResponse(status_code=502, content={"detail": "Сервіс AI не відповів — спробуйте ще раз"})
 
 
 @app.exception_handler(Exception)
@@ -92,6 +109,20 @@ def serve_upload(filename: str, session: Session = Depends(get_session)):
 
 @app.get("/health")
 async def health():
+    """Liveness. Touches neither the database nor Redis: an uptime pinger that keeps a free
+    Render service awake must not keep Neon awake too (its free compute hours are limited)."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def ready(session: Session = Depends(get_session)):
+    """Readiness for a load balancer / Kubernetes: the database and Redis answer."""
+    try:
+        session.execute(text("SELECT 1"))
+        cache_service.r.ping()
+    except Exception:
+        logger.warning("not_ready", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ok"}
 
 

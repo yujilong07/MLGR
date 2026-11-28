@@ -12,6 +12,9 @@ logger = structlog.get_logger().bind(service="auth")
 
 auth_router = APIRouter()
 
+# Plain `def` routes (thread pool): database calls and bcrypt (~0.25 s of CPU per hash)
+# must not block the event loop.
+
 
 def _free_username(session: Session, base: str) -> str:
     """ivan, ivan2, ivan3 ... — the username is made from the email and the user never sees
@@ -27,7 +30,7 @@ def _free_username(session: Session, base: str) -> str:
 
 
 @auth_router.post('/register', response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(user_data: UserCreate, session: Session = Depends(get_session)):
+def create_user(user_data: UserCreate, session: Session = Depends(get_session)):
     email = user_data.email.strip().lower()
     if session.exec(select(User).where(func.lower(User.email) == email)).first():
         logger.warning("register_conflict", email=email, reason="email_taken")
@@ -59,7 +62,7 @@ async def create_user(user_data: UserCreate, session: Session = Depends(get_sess
 
 @auth_router.post('/login', response_model=AuthResponse, status_code=status.HTTP_200_OK)
 @limiter.limit("5/minute")
-async def login(request: Request, body: LoginRequest, session: Session = Depends(get_session)):
+def login(request: Request, body: LoginRequest, session: Session = Depends(get_session)):
     credential = body.email.strip()
     user = session.exec(
         select(User).where((func.lower(User.email) == credential.lower()) | (User.username == credential))
@@ -77,19 +80,19 @@ async def login(request: Request, body: LoginRequest, session: Session = Depends
 
 
 @auth_router.delete('/logout', status_code=status.HTTP_204_NO_CONTENT)
-async def logout(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+def logout(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
     set_cached(f"blacklist:{token}", "1", ttl=3600)
     logger.info("user_logged_out", email=current_user.email)
     return None
 
 
 @auth_router.get('/profile', response_model=Profile)
-async def get_profile(current_user: User = Depends(get_current_user)):
+def get_profile(current_user: User = Depends(get_current_user)):
     return Profile(**(current_user.profile or {}))
 
 
 @auth_router.put('/profile', response_model=Profile)
-async def put_profile(body: Profile, current_user: User = Depends(get_current_user),
+def put_profile(body: Profile, current_user: User = Depends(get_current_user),
                       session: Session = Depends(get_session)):
     """Replaces "Мої дані" — the defaults every new report starts with."""
     current_user.profile = body.model_dump(exclude_none=True)

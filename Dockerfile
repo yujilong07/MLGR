@@ -16,10 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 COPY frontend/ /frontend/
 
+# No worker: builds run inside the web process, GENERATION_CONCURRENCY at a time (keep 1–2 on
+# 512 MB). More uvicorn processes: WEB_CONCURRENCY. All tuning variables are listed in README.md.
 ENV FRONTEND_DIR=/frontend \
     UPLOADS_DIR=/app/uploads \
     GENERATED_DIR=/app/generated \
-    CELERY_TASK_ALWAYS_EAGER=true
+    CELERY_TASK_ALWAYS_EAGER=true \
+    GENERATION_CONCURRENCY=2
 
 EXPOSE 8000
 

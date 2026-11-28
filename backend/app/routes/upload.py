@@ -16,7 +16,7 @@ def _human_number(section_path: str) -> str:
 
 
 @upload_router.post('/upload/image')
-async def upload_image(
+def upload_image(
     file: UploadFile = File(...),
     report_id: int = Form(...),
     section_index: Optional[int] = Form(None),
@@ -34,7 +34,7 @@ async def upload_image(
     if not report:
         raise HTTPException(status_code=404, detail="Not found")
 
-    image = save_image(session, report_id, await file.read(), section_path,
+    image = save_image(session, report_id, file.file.read(), section_path,
                        caption=f"Зображення {_human_number(section_path)}")
     return {"url": f"/uploads/{image.filename}", "id": image.id,
             "caption": image.caption, "section_path": image.section_path, "position": image.position}

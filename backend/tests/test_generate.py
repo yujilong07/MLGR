@@ -101,7 +101,7 @@ def test_stream_conclusion_cached_saved_to_report(client, auth_token, auth_heade
     assert report["conclusion"] == "Cached conclusion"
 
 
-# ── generate docx (Celery task) ───────────────────────────────────────────────
+# ── generate docx (queued build) ─────────────────────────────────────────────
 
 def test_generate_docx_no_auth(client):
     response = client.post("/reports/1/generate")
@@ -109,22 +109,18 @@ def test_generate_docx_no_auth(client):
 
 
 def test_generate_docx_not_found(client, auth_headers):
-    mock_task = MagicMock()
-    mock_task.id = "fake-id"
-    with patch("app.routes.generate.generate_docx_task") as mock_celery:
-        mock_celery.delay.return_value = mock_task
+    with patch("app.routes.generate.generation.submit", return_value="fake-id") as submit:
         response = client.post("/reports/9999/generate", headers=auth_headers)
     assert response.status_code == 404
+    submit.assert_not_called()
 
 
 def test_generate_docx_success(client, auth_headers, report_id):
-    mock_task = MagicMock()
-    mock_task.id = "fake-task-id"
-    with patch("app.routes.generate.generate_docx_task") as mock_celery:
-        mock_celery.delay.return_value = mock_task
+    with patch("app.routes.generate.generation.submit", return_value="fake-task-id") as submit:
         response = client.post(f"/reports/{report_id}/generate", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["task_id"] == "fake-task-id"
+    submit.assert_called_once_with(report_id, 1)
 
 
 # ── generate status (SSE, token via query param) ──────────────────────────────
@@ -139,31 +135,36 @@ def test_generate_status_missing_token(client):
     assert response.status_code == 422
 
 
+def test_generate_status_unknown_job(client, auth_token, report_id):
+    with patch("app.routes.generate.generation.get_job", return_value=None):
+        response = client.get(f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
+    assert response.status_code == 404
+
+
+def _job(report_id, state):
+    return {"report_id": report_id, "user_id": 1, "state": state, "ts": 0}
+
+
 def test_generate_status_pending(client, auth_token, report_id):
-    mock_result = MagicMock()
-    # First poll → pending, second poll → done so the stream terminates
-    mock_result.successful.side_effect = [False, True]
-    mock_result.failed.return_value = False
-    with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result), \
+    with patch("app.routes.generate.generation.get_job", return_value=_job(report_id, "queued")), \
+         patch("app.routes.generate.generation.progress",
+               side_effect=[(_job(report_id, "running"), 0), (_job(report_id, "done"), 0)]), \
          patch("app.routes.generate.asyncio.sleep"):
-        response = client.get(
-            f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
+        response = client.get(f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
     assert response.status_code == 200
     assert "pending" in response.text
+    assert "done" in response.text
 
 
 def test_generate_status_done(client, auth_token, report_id):
-    mock_result = MagicMock()
-    mock_result.successful.return_value = True
-    mock_result.failed.return_value = False
-    with patch("app.routes.generate.celery.AsyncResult", return_value=mock_result):
-        response = client.get(
-            f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
+    with patch("app.routes.generate.generation.get_job", return_value=_job(report_id, "done")), \
+         patch("app.routes.generate.generation.progress", return_value=(_job(report_id, "done"), 0)):
+        response = client.get(f"/reports/{report_id}/generate/status?task_id=abc&token={auth_token}")
     assert response.status_code == 200
     assert "done" in response.text
 
 
-# ── download ──────────────────────────────────────────────────────────────────
+# ── download (files are in the database) ─────────────────────────────────────
 
 def test_download_no_auth(client):
     response = client.get("/reports/1/download")
@@ -176,31 +177,36 @@ def test_download_report_not_found(client, auth_headers):
 
 
 def test_download_file_not_found(client, auth_headers, report_id):
-    with patch("app.routes.generate.os.path.exists", return_value=False):
-        response = client.get(f"/reports/{report_id}/download", headers=auth_headers)
+    response = client.get(f"/reports/{report_id}/download", headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_download_success(client, auth_headers, report_id, tmp_path):
-    fake_file = tmp_path / f"report_{report_id}.docx"
-    fake_file.write_bytes(b"PK fake docx content")
-    with patch("app.routes.generate.os.path.join", return_value=str(fake_file)), \
-         patch("app.routes.generate.os.path.exists", return_value=True):
-        response = client.get(f"/reports/{report_id}/download", headers=auth_headers)
+def _store(session, report_id, fmt, data):
+    from app.models.report import GeneratedFile
+    session.add(GeneratedFile(report_id=report_id, format=fmt, version="v1", size=len(data), data=data))
+    session.commit()
+
+
+def test_download_success(client, auth_headers, report_id, session, tmp_path, monkeypatch):
+    monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
+    _store(session, report_id, "docx", b"PK fake docx content")
+    response = client.get(f"/reports/{report_id}/download", headers=auth_headers)
     assert response.status_code == 200
     assert "wordprocessingml" in response.headers["content-type"]
+    assert response.content == b"PK fake docx content"
 
 
-def test_download_pdf_success(client, auth_headers, report_id, tmp_path, monkeypatch):
+def test_download_pdf_success(client, auth_headers, report_id, session, tmp_path, monkeypatch):
     monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
-    (tmp_path / f"report_{report_id}.pdf").write_bytes(b"%PDF-1.7 fake")
+    _store(session, report_id, "pdf", b"%PDF-1.7 fake")
     response = client.get(f"/reports/{report_id}/download?format=pdf", headers=auth_headers)
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
 
 
-def test_download_pdf_missing(client, auth_headers, report_id, tmp_path, monkeypatch):
+def test_download_pdf_missing(client, auth_headers, report_id, session, tmp_path, monkeypatch):
     monkeypatch.setenv("GENERATED_DIR", str(tmp_path))
+    _store(session, report_id, "docx", b"PK")
     response = client.get(f"/reports/{report_id}/download?format=pdf", headers=auth_headers)
     assert response.status_code == 404
 

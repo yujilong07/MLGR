@@ -83,13 +83,14 @@ def ensure_local(session: Session, image: ReportImage) -> bool:
     """Makes sure the file is in the uploads directory, restoring it from the database.
     An image saved before bytes went to the database is backfilled while its file still exists."""
     path = local_path(image)
-    blob = session.get(ImageBlob, image.id)
     if os.path.exists(path):
-        if blob is None:
+        # Only whether the bytes are in the database, without pulling them over the network
+        if not _has_blob(session, image.id):
             with open(path, "rb") as f:
                 session.add(ImageBlob(image_id=image.id, data=f.read()))
             session.commit()
         return True
+    blob = session.get(ImageBlob, image.id)
     if blob is None:
         return False
     with open(path, "wb") as f:
@@ -102,8 +103,12 @@ def ensure_all_local(session: Session, images) -> list[ReportImage]:
     return [img for img in images if ensure_local(session, img)]
 
 
+def _has_blob(session: Session, image_id: int) -> bool:
+    return session.exec(select(ImageBlob.image_id).where(ImageBlob.image_id == image_id)).first() is not None
+
+
 def is_available(session: Session, image: ReportImage) -> bool:
-    return os.path.exists(local_path(image)) or session.get(ImageBlob, image.id) is not None
+    return os.path.exists(local_path(image)) or _has_blob(session, image.id)
 
 
 def delete_image(session: Session, image: ReportImage, commit: bool = True):

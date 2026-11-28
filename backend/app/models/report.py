@@ -60,3 +60,17 @@ class ImageBlob(SQLModel, table=True):
     images never loads the bytes."""
     image_id : int = Field(foreign_key="reportimage.id", primary_key=True)
     data : bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+class GeneratedFile(SQLModel, table=True):
+    """The last built .docx / .pdf of a report. In the database (not on the local disk) so that
+    whichever server instance answers the download has it. Rows older than GENERATED_TTL_HOURS
+    are removed: the editor rebuilds the files before every download anyway."""
+    report_id : int = Field(foreign_key="report.id", primary_key=True)
+    format : str = Field(primary_key=True, max_length=8)
+    # id of the build; names the copy cached on the local disk, so a stale copy is never served
+    version : str = Field(max_length=32)
+    size : int = Field(default=0)
+    data : bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    # naive UTC
+    created_at : datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+                                  index=True)

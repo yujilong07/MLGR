@@ -86,7 +86,42 @@ AI responses are cached, so re-generating the same content is instant.
 ## Limits
 
 - AI endpoints: 10 requests / minute per user
+- Document builds: 20 requests / minute per user, one build per report at a time
 - Login attempts: 5 requests / minute per IP
+
+Counters are kept in Redis, so they hold across workers and instances.
+
+---
+
+## Running under load
+
+The web service keeps no state of its own: build jobs live in Redis, built `.docx` / `.pdf`
+files and images live in the database (the local disk is only a cache). It can run as several
+instances behind a load balancer.
+
+A build takes several CPU seconds and 0.1–0.3 GB of RAM, so builds are queued. The editor
+shows the user's place in the queue.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GENERATION_CONCURRENCY` | `2` | Builds running at once per web process (when there is no Celery worker) |
+| `GENERATION_MAX_QUEUE` | `40` | Queued builds before `/generate` answers 503 |
+| `GENERATED_TTL_HOURS` | `24` | How long built files stay in the database |
+| `WEB_CONCURRENCY` | `1` | uvicorn worker processes (read by uvicorn itself) |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `10` | Database connections per process |
+| `RATE_LIMIT_STORAGE_URI` | `REDIS_URL` | `memory://` keeps rate limits per process |
+| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Used when the main model hits its Groq limit; empty disables it |
+| `AI_MAX_RETRIES` / `AI_TIMEOUT_SECONDS` | `3` / `120` | Retries on 429 / 5xx, request timeout |
+
+- **One service, no worker** (`CELERY_TASK_ALWAYS_EAGER=true`, the root `Dockerfile`):
+  builds run inside the web process, `GENERATION_CONCURRENCY` at a time. Keep it at 1–2 on 512 MB.
+- **With a worker** (`docker-compose.prod.yml`): builds go to Celery, and the worker's
+  `--concurrency` sets how many run at once.
+- **Several processes or instances**: point `DATABASE_URL` at Neon's pooled host
+  (`…-pooler.…neon.tech`). Every process opens up to `DB_POOL_SIZE + DB_MAX_OVERFLOW` connections.
+- `/health` touches neither the database nor Redis, so an uptime pinger can hit it to keep a
+  free Render service awake without waking Neon. `/health/ready` checks both and is meant for
+  a load balancer or Kubernetes.
 
 ---
 

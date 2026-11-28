@@ -8,14 +8,18 @@ from app.models.user import User
 from app.schemas.report import ReportCreate, ReportUpdate, ReportResponse
 from app.services.auth_service import get_current_user
 from app.services.image_store import delete_image as remove_image, is_available, ordered, save_image
+from app.services.generation import delete_files as delete_generated_files
 from app.services.latex_doc import parse_latex_body
 
 UNPLACED = "u"
 
 reports_router = APIRouter()
 
+# Plain `def` routes: FastAPI runs them in its thread pool, so the synchronous database calls
+# never block the event loop (with `async def` every query to a remote Postgres did).
+
 @reports_router.post('', response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
-async def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def create_report(report_data: ReportCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     new_report = Report(user_id=current_user.id, **report_data.model_dump())
     session.add(new_report)
     session.commit()
@@ -23,19 +27,19 @@ async def create_report(report_data: ReportCreate, current_user: User = Depends(
     return new_report
 
 @reports_router.get('', response_model=list[ReportResponse], status_code=status.HTTP_200_OK)
-async def get_reports(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def get_reports(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     reports = session.exec(select(Report).where(Report.user_id == current_user.id)).all()
     return reports
 
 @reports_router.get('/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
-async def get_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def get_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return report
 
 @reports_router.patch('/{id}', response_model=ReportResponse, status_code=status.HTTP_200_OK)
-async def update_report_by_id(id: int, report_data: ReportUpdate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def update_report_by_id(id: int, report_data: ReportUpdate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
@@ -83,18 +87,19 @@ def _apply_latex(session: Session, report: Report) -> list[str]:
     return parsed["warnings"]
 
 @reports_router.delete('/{id}', status_code=status.HTTP_204_NO_CONTENT)
-async def delete_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def delete_report_by_id(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     for image in session.exec(select(ReportImage).where(ReportImage.report_id == id)).all():
         remove_image(session, image, commit=False)
+    delete_generated_files(session, id)
     session.delete(report)
     session.commit()
     return None
 
 @reports_router.post('/{id}/images', status_code=status.HTTP_201_CREATED)
-async def upload_image(
+def upload_image(
     id: int,
     file: UploadFile = File(...),
     caption: str = Form(...),
@@ -106,7 +111,7 @@ async def upload_image(
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    image = save_image(session, id, await file.read(), section_path, caption)
+    image = save_image(session, id, file.file.read(), section_path, caption)
     return {"id": image.id, "filename": image.filename, "caption": image.caption}
 
 class ImageUpdate(BaseModel):
@@ -141,7 +146,7 @@ def _own_image(report_id: int, image_id: int, user: User, session: Session) -> R
 
 
 @reports_router.get('/{id}/images')
-async def list_images(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+def list_images(id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     report = session.exec(select(Report).where(Report.id == id, Report.user_id == current_user.id)).first()
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
@@ -150,7 +155,7 @@ async def list_images(id: int, current_user: User = Depends(get_current_user), s
 
 
 @reports_router.patch('/{id}/images/{image_id}')
-async def update_image(id: int, image_id: int, body: ImageUpdate,
+def update_image(id: int, image_id: int, body: ImageUpdate,
                                current_user: User = Depends(get_current_user),
                                session: Session = Depends(get_session)):
     image = _own_image(id, image_id, current_user, session)
@@ -163,7 +168,7 @@ async def update_image(id: int, image_id: int, body: ImageUpdate,
 
 
 @reports_router.delete('/{id}/images/{image_id}', status_code=status.HTTP_204_NO_CONTENT)
-async def delete_image(id: int, image_id: int, current_user: User = Depends(get_current_user),
+def delete_image(id: int, image_id: int, current_user: User = Depends(get_current_user),
                        session: Session = Depends(get_session)):
     image = _own_image(id, image_id, current_user, session)
     remove_image(session, image)
