@@ -63,10 +63,12 @@ def _apply_latex(session: Session, report: Report) -> list[str]:
     report.sections = parsed["sections"]
     report.conclusion = parsed["conclusion"]
     report.bibliography = parsed["bibliography"]
-    if report.kind == "essay":
+    if report.kind in ("essay", "course"):
         report.introduction = parsed["introduction"]
     else:
         report.goal = parsed["goal"]
+    if parsed.get("abbreviations") or isinstance(report.meta, dict) and report.meta.get("abbreviations"):
+        report.meta = {**(report.meta or {}), "abbreviations": parsed.get("abbreviations", "")}
     placed = {f["image_id"]: f for f in parsed["figures"]}
     for img in images:
         fig = placed.get(img.id)
@@ -111,7 +113,7 @@ class ImageUpdate(BaseModel):
     caption: Optional[str] = None
     # moves the image when sections are deleted or reordered: "0" / "0.1"
     # "u" — uploaded but not placed in any section (LaTeX mode); not in the document
-    section_path: Optional[str] = Field(default=None, pattern=r"^(\d+(\.\d+)?|u)$")
+    section_path: Optional[str] = Field(default=None, pattern=r"^(\d+(\.\d+){0,2}|u)$")
     position: Optional[int] = Field(default=None, ge=0)
 
 

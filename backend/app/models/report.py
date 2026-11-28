@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import JSON
 class Report(SQLModel,table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
-    # "lab" — лабораторна / практична, "essay" — реферат (other title page and structure)
+    # "lab" — лабораторна / практична, "essay" — реферат, "course" — курсова робота / проєкт
     kind: str = Field(default="lab", max_length=8)
     # "university" (also college) or "school" — picks the title page template (services/templates.py)
     level: str = Field(default="university", max_length=16)
@@ -34,6 +34,10 @@ class Report(SQLModel,table = True):
     bibliography: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     # "latex": the content is edited as LaTeX; latex_source is kept verbatim and
     # sections / conclusion / ... are parsed from it on every save
+    # Course project data: course_type (project / work), doc_code, specialty, year_of_study, semester,
+    # student_full_dative, deadline, input_data, contents, graphics, issue_date, task_sheet (bool),
+    # calendar [{stage, deadline, note, sub}], abbreviations
+    meta: Optional[Any] = Field(default=None, sa_column=Column(JSON))
     editor_mode: str = Field(default="form", max_length=8)
     latex_source: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

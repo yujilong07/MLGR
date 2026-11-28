@@ -14,23 +14,28 @@ import re
 
 from app.services.content import split_inline
 from app.services.math_render import FormulaError, latex_to_svg
+from app.services.course_pages import (
+    calendar_rows, course_words, report_meta_value, supervisors, task_fields, task_heading_lines, wants_task_sheet,
+)
 from app.services.report_outline import (
-    Figure, Formula, Heading, Listing, References, Text,
-    is_essay, iter_report_blocks, text_lines,
+    Figure, Formula, Heading, Listing, References, Table, Text,
+    doc_style, iter_report_blocks, text_lines,
 )
 from app.services.templates import resolve_title_page
+
+LINE_PT = 24.15
 
 EMU_PER_MM = 36000
 
 CSS = """
 @page {
   size: A4;
-  margin: 20mm 20mm 20mm 30mm;
+  margin: 20mm @@right@@mm 20mm 30mm;
   @top-right {
     content: counter(page);
     vertical-align: top;
     padding-top: 11mm;
-    font: 14pt "Times New Roman", "Liberation Serif", serif;
+    font: @@pagept@@pt "Times New Roman", "Liberation Serif", serif;
   }
 }
 @page :first { @top-right { content: none; } }
@@ -49,11 +54,12 @@ p { margin: 0; text-indent: 1.25cm; text-align: justify; orphans: 2; widows: 2; 
 .toc-title { margin: 0; font-size: 14pt; font-weight: bold; text-align: center; }
 .toc a { display: block; color: #000; text-decoration: none; }
 .toc a.l2 { padding-left: 0.5cm; }
+.toc a.l3 { padding-left: 1cm; }
 .toc a::after { content: leader('.') target-counter(attr(href), page); }
 
-h1, h2 { margin: 0; font-size: 14pt; font-weight: bold; break-after: avoid; }
+h1, h2, h3 { margin: 0; font-size: 14pt; font-weight: bold; break-after: avoid; }
 h1 { text-align: center; }
-h2 { text-align: left; text-indent: 1.25cm; }
+h2, h3 { text-align: left; text-indent: 1.25cm; }
 
 .listing-caption { text-indent: 0; text-align: left; break-after: avoid; }
 pre {
@@ -63,9 +69,9 @@ pre {
   tab-size: 4;
 }
 
-/* essay: title page and ЗМІСТ are counted but carry no page number */
+/* essay / course work: title page, task, plan and ЗМІСТ are counted but carry no page number */
 @page front { @top-right { content: none; } }
-.essay .title, .essay .toc { page: front; }
+.from-body .title, .from-body .toc, .from-body .task, .from-body .plan { page: front; }
 .title { display: flex; flex-direction: column; height: 257mm; }
 .title .push { flex: 1; }
 .field { display: flex; text-indent: 0; text-align: left; }
@@ -73,16 +79,40 @@ pre {
 .field .lbl { padding-right: 6px; white-space: pre; }
 .hint { font-size: 10pt; line-height: 12pt; }
 h1.new-page { break-before: page; }
-h1.space, h2.space { margin-bottom: 24.15pt; }
-.essay .figure { margin: 24.15pt 0; }
+.spaced .figure { margin: 24.15pt 0; }
 
 .formula { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin: 8pt 0; break-inside: avoid; }
-.essay .formula { margin: 24.15pt 0; }
+.spaced .formula { margin: 24.15pt 0; }
 .formula .f { grid-column: 2; }
 .formula .n { grid-column: 3; text-align: right; }
 .formula svg, p svg { display: inline-block; }
 .latex-src { font-family: "Cambria Math", "Liberation Serif", serif; font-style: italic; }
 .refs p { text-indent: 1.25cm; }
+
+.table-caption { text-indent: 0; text-align: left; break-after: avoid; }
+.spaced .table-caption { margin-top: 24.15pt; }
+table.grid { width: 100%; border-collapse: collapse; font-size: 12pt; line-height: 1.2; }
+.spaced table.grid { margin-bottom: 24.15pt; }
+table.grid td, table.grid th { border: 1px solid #000; padding: 2pt 4pt; vertical-align: top; text-align: left; font-weight: normal; }
+table.grid thead th { font-weight: bold; text-align: center; }
+table.grid p { text-indent: 0; text-align: inherit; }
+
+.task, .plan { break-after: page; }
+.task p, .plan p { text-indent: 0; }
+.task .center, .plan .center { text-align: center; }
+.task .head { font-weight: bold; text-align: center; }
+.uline { display: flex; text-align: left; }
+.uline .lbl { white-space: pre; padding-right: 6px; }
+.uline .u { flex: 1; border-bottom: 1px solid #000; text-align: center; }
+.uline.long { display: block; }
+.uline.long .lbl { white-space: normal; }
+.uline.long .u { display: inline; border-bottom: none; text-decoration: underline; }
+.u-inline { text-decoration: underline; white-space: pre; }
+table.sign { width: 100%; margin-top: 12pt; border-collapse: collapse; }
+table.sign td { padding: 0 4pt; vertical-align: bottom; text-align: center; }
+table.sign td:first-child { text-align: left; white-space: nowrap; }
+table.sign .h td { font-size: 10pt; line-height: 12pt; vertical-align: top; }
+.plan table.grid td:first-child, .plan table.grid td:nth-child(3) { text-align: center; }
 
 .figure { break-inside: avoid; text-align: center; }
 .figure img { display: block; margin: 0 auto; }
@@ -157,6 +187,50 @@ def _title_page(report):
     return '<section class="title">' + ''.join(out) + '</section>'
 
 
+def _task_pages(report):
+    """ЗАВДАННЯ and КАЛЕНДАРНИЙ ПЛАН of a course work (services/course_pages.py)."""
+    words = course_words(report)
+    head = task_heading_lines(report)
+    line = lambda label, value: (f'<p class="uline"><span class="lbl">{escape(label)}</span>'
+                                 f'<span class="u">{escape(value)}&nbsp;</span></p>')
+    long_line = lambda label, value: (f'<p class="uline long"><span class="lbl">{escape(label)}</span>'
+                                      f'<span class="u">&nbsp;{escape(value)}&nbsp;</span></p>')
+    course_line = ''.join(f'<span class="u-inline">{escape(t)}</span>' if u else escape(t) for t, u in head["course_line"])
+    task = ('<section class="task">'
+            f'<p class="center">{escape(head["institution"])}</p>'
+            + ''.join(line(l, v) for l, v in head["fields"])
+            + f'<p>{course_line}</p><p>&nbsp;</p>'
+            f'<p class="head">ЗАВДАННЯ</p><p class="head">{escape(words["task_title"])}</p>'
+            + line(head["student_label"], head["student_full"])
+            + '<p class="hint center">(прізвище, ім’я, по батькові)</p>'
+            + ''.join(long_line(f"{n}. {l}", v) for n, (l, v) in enumerate(task_fields(report), start=1))
+            + '</section>')
+    rows = ''.join(f'<tr><td>{escape(r["no"])}</td><td>{escape(r["stage"])}</td><td>{escape(r["deadline"])}</td>'
+                   f'<td>{escape(r["note"])}</td></tr>' for r in calendar_rows(report))
+    signers = [("Студент:", (getattr(report, "student_name", "") or "").split("\n")[0].strip(), "(прізвище, ініціали)")]
+    signers += [("Керівник роботи:", t, "(посада, прізвище, ініціали)") for t in supervisors(report)]
+    sign = ''.join(f'<tr><td>{escape(l)}</td><td>______________</td><td>{escape(n)}</td></tr>'
+                   f'<tr class="h"><td></td><td>(підпис)</td><td>{h}</td></tr>' for l, n, h in signers)
+    plan = ('<section class="plan"><p class="head center"><b>КАЛЕНДАРНИЙ ПЛАН</b></p><p>&nbsp;</p>'
+            '<table class="grid"><thead><tr><th>№</th>'
+            f'<th>Назви етапів {escape(words["genitive"])}</th><th>Строк виконання етапів роботи</th><th>Примітка</th>'
+            f'</tr></thead><tbody>{rows}</tbody></table><p>&nbsp;</p>'
+            + line("Дата видачі завдання:", report_meta_value(report, "issue_date"))
+            + f'<table class="sign">{sign}</table></section>')
+    return task + plan
+
+
+def _table_html(block):
+    head = block.rows[:block.header]
+    rest = block.rows[block.header:]
+    cell = lambda tag, text: f'<{tag}>{_inline_html(text)}</{tag}>'
+    thead = ''.join('<tr>' + ''.join(cell('th', c) for c in row) + '</tr>' for row in head)
+    tbody = ''.join('<tr>' + ''.join(cell('td', c) for c in row) + '</tr>' for row in rest)
+    caption = f"Таблиця {block.number}" + (f" – {escape(block.caption)}" if block.caption else "")
+    return (f'<p class="table-caption">{caption}</p><table class="grid">'
+            + (f'<thead>{thead}</thead>' if thead else '') + f'<tbody>{tbody}</tbody></table>')
+
+
 def _figure_style(path):
     size = image_size(path)
     if 'height' in size:
@@ -165,15 +239,18 @@ def _figure_style(path):
 
 
 def build_report_html(report, images=None, student_name=""):
-    essay = is_essay(report)
+    style = doc_style(report)
     toc, body = [], []
     for block in iter_report_blocks(report, images):
         if isinstance(block, Heading):
-            tag = 'h1' if block.level == 1 else 'h2'
-            cls = ' '.join(c for c, on in (('new-page', block.new_page), ('space', block.space_after)) if on)
+            tag = f'h{block.level}'
+            cls_attr = ' class="new-page"' if block.new_page else ''
+            spacing = f'margin-top:{LINE_PT * block.space_before}pt;margin-bottom:{LINE_PT * block.space_after}pt'
             toc.append(f'<a class="l{block.level}" href="#{block.bookmark}">{escape(block.toc_text)}</a>')
-            cls_attr = f' class="{cls}"' if cls else ''
-            body.append(f'<{tag}{cls_attr} id="{block.bookmark}">{escape(block.toc_text)}</{tag}>')
+            text = escape(block.text.upper() if block.level == 1 else block.text)
+            if block.subtitle:
+                text += f'<br>{escape(block.subtitle)}'
+            body.append(f'<{tag}{cls_attr} style="{spacing}" id="{block.bookmark}">{text}</{tag}>')
         elif isinstance(block, Text):
             body.append(_paragraphs(block.text))
         elif isinstance(block, Listing):
@@ -189,14 +266,19 @@ def build_report_html(report, images=None, student_name=""):
         elif isinstance(block, Formula):
             body.append(f'<div class="formula"><span class="f">{_math_svg(block.latex, inline=False)}</span>'
                         f'<span class="n">({block.number})</span></div>')
+        elif isinstance(block, Table):
+            body.append(_table_html(block))
         elif isinstance(block, References):
             body.append('<div class="refs">' + ''.join(
                 f'<p>{n}. {escape(item)}</p>' for n, item in enumerate(block.items, start=1)) + '</div>')
 
+    css = CSS.replace("@@right@@", str(style.right_margin_mm)).replace("@@pagept@@", str(style.page_number_pt))
+    classes = " ".join(c for c, on in (("from-body", style.numbers_from_body), ("spaced", style.spaced_blocks), (style.kind, True)) if on)
     return (
-        f'<!DOCTYPE html><html lang="uk"><head><meta charset="utf-8"><style>{CSS}</style></head>'
-        f'<body class="{"essay" if essay else "lab"}">'
+        f'<!DOCTYPE html><html lang="uk"><head><meta charset="utf-8"><style>{css}</style></head>'
+        f'<body class="{classes}">'
         + _title_page(report)
+        + (_task_pages(report) if wants_task_sheet(report) else '')
         + '<section class="toc"><p class="toc-title">ЗМІСТ</p>' + ''.join(toc) + '</section>'
         + ''.join(body)
         + '</body></html>'

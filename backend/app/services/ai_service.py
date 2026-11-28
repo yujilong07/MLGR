@@ -3,7 +3,11 @@ import time
 import structlog
 from openai import OpenAI
 from app.config import settings
-from app.services.content import item_blocks, strip_inline_math
+from app.services.content import (
+    APPENDIX_LETTERS, children, item_blocks, main_and_appendices, strip_inline_math, table_rows,
+)
+
+_MAX_TABLE_ROWS = 25
 
 client = OpenAI(
     api_key=settings.groq_api_key,
@@ -22,8 +26,10 @@ _LANG_RULE = (
 
 
 _ESSAY_INTRO_PROMPT = (
-    "Ти досвідчений викладач, який допомагає написати розділ «Вступ» до реферату студента або учня "
-    "(рівень закладу зазначено в описі). "
+    "Ти досвідчений викладач, який допомагає написати розділ «Вступ» до реферату або курсової роботи "
+    "студента чи учня (тип роботи й рівень закладу зазначено в описі). "
+    "Для курсової роботи вступ обов’язково містить: актуальність теми, мету, задачі (що послідовно "
+    "розв’язується в розділах), об’єкт і предмет дослідження — лише якщо їх можна вивести з матеріалу. "
     "Тобі дають тему, дисципліну та назви розділів (і, можливо, їхній зміст). "
     "Напиши 2–3 абзаци (120–220 слів): актуальність теми, мета реферату та коротко — які питання "
     "розглянуто в розділах. Не вигадуй фактів, чисел і джерел, яких немає у матеріалі. "
@@ -155,7 +161,7 @@ def _strip_markdown(text):
 
 def _report_header(report) -> str:
     lines = [
-        f"Тип роботи: {'реферат' if getattr(report, 'kind', 'lab') == 'essay' else 'лабораторна / практична робота'}",
+        f"Тип роботи: {_KIND_NAMES.get(getattr(report, 'kind', 'lab'), _KIND_NAMES['lab'])}",
         f"Заклад: {'школа (учнівська робота)' if getattr(report, 'level', 'university') == 'school' else 'університет / коледж'}",
         f"Тема роботи: {report.title}",
         f"Дисципліна: {report.discipline}",
@@ -167,8 +173,13 @@ def _report_header(report) -> str:
     return "\n".join(lines)
 
 
+_KIND_NAMES = {"lab": "лабораторна / практична робота", "essay": "реферат",
+               "course": "курсова робота (курсовий проєкт)"}
+
+
 def report_section_blocks(report) -> list[str]:
-    """One plain-text block per top-level section (with its subsections, code and figure captions)."""
+    """One plain-text block per top-level section (with its sub-items, code, tables and
+    figure captions); appendices come last as "Додаток А"."""
     images_by_path = {}
     for img in getattr(report, "images", None) or []:
         images_by_path.setdefault(img.section_path, []).append(img.caption)
@@ -186,16 +197,27 @@ def report_section_blocks(report) -> list[str]:
                 if len(code) > _MAX_CODE_CHARS:
                     code = code[:_MAX_CODE_CHARS] + "\n... (код скорочено)"
                 lines.append(f"Код ({b.get('language') or 'code'}):\n{code}")
+            elif b["type"] == "table":
+                rows = table_rows(b)
+                if rows:
+                    shown = "\n".join(" | ".join(strip_inline_math(c) for c in row) for row in rows[:_MAX_TABLE_ROWS])
+                    more = f"\n... ще {len(rows) - _MAX_TABLE_ROWS} рядків" if len(rows) > _MAX_TABLE_ROWS else ""
+                    lines.append(f"Таблиця «{(b.get('caption') or '').strip()}»:\n{shown}{more}")
         for caption in images_by_path.get(path, []):
             lines.append(f"Рисунок: {caption}")
         return "\n".join(lines)
 
-    blocks = []
-    for i, section in enumerate(report.sections or []):
-        parts = [block(f"{i + 1}", section, str(i))]
-        for j, sub in enumerate(section.get("subsections") or []):
-            parts.append(block(f"{i + 1}.{j + 1}", sub, f"{i}.{j}"))
-        blocks.append("\n".join(parts))
+    def walk(item, label, path, depth):
+        parts = [block(label, item, path)]
+        if depth < 3:
+            for k, sub in enumerate(children(item)):
+                parts += walk(sub, f"{label}.{k + 1}", f"{path}.{k}", depth + 1)
+        return parts
+
+    main, appendices = main_and_appendices(report.sections)
+    blocks = ["\n".join(walk(s, str(n), str(idx), 1)) for n, (idx, s) in enumerate(main, start=1)]
+    blocks += ["\n".join(walk(s, f"Додаток {APPENDIX_LETTERS[k % len(APPENDIX_LETTERS)]}", str(idx), 1))
+               for k, (idx, s) in enumerate(appendices)]
     return blocks
 
 

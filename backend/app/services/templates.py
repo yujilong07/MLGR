@@ -8,6 +8,8 @@ which gets the same JSON from GET /templates) draw it with one small set of elem
     {"t": "blank", "n": 2}
     {"t": "field", "label": "на тему:", "value": "{title}", "hint": "(тема реферату)",
                    "repeat": "students"}      # underlined to the right margin; repeat: one per student
+                                              # ({student}) or per supervisor ({supervisor});
+                                              # "repeat_label": the label on every row
     {"t": "columns", "left": [...lines], "right": [...lines]}   # "{students}" = one line per student
     {"t": "push"}                             # what follows goes to the bottom of the page
 
@@ -16,6 +18,8 @@ on gender / number, defined per template in "words" ({did} -> Виконав / �
 A new institution type or language (e.g. English) is a new entry here."""
 import re
 from datetime import datetime
+
+from app.services.course_pages import course_words, report_meta_value, supervisors
 
 MINISTRY_UA = "Міністерство освіти і науки України"
 
@@ -78,6 +82,34 @@ TEMPLATES = {
              "hint": "(посада, прізвище, ініціали)"},
             {"t": "push"},
             {"t": "line", "text": "{city_year_r}"},
+        ],
+    },
+    "university_course": {
+        "name": "Університет / коледж — курсова робота, курсовий проєкт",
+        "level": "university", "kind": "course", "words": _UNI_WORDS,
+        "title_page": [
+            {"t": "line", "text": "{ministry}", "optional": True},
+            {"t": "line", "text": "{institution}"},
+            {"t": "blank", "n": 1},
+            {"t": "field", "label": "Факультет", "value": "{faculty}", "optional": True},
+            {"t": "field", "label": "Кафедра", "value": "{department}", "optional": True},
+            {"t": "blank", "n": 3},
+            {"t": "line", "text": "{course_title}", "bold": True},
+            {"t": "line", "text": "ПОЯСНЮВАЛЬНА ЗАПИСКА", "bold": True},
+            {"t": "field", "label": "", "value": "{doc_code}", "hint": "(позначення документа в разі необхідності)",
+             "optional": True},
+            {"t": "blank", "n": 1},
+            {"t": "field", "label": "", "value": "{title}", "hint": "{topic_hint}"},
+            {"t": "blank", "n": 1},
+            {"t": "field", "label": "", "value": "{discipline}", "hint": "(дисципліна)"},
+            {"t": "blank", "n": 2},
+            {"t": "field", "label": "Керівник", "value": "{supervisor}", "hint": "(підпис, дата, посада, прізвище, ініціали)",
+             "repeat": "teachers", "repeat_label": True},
+            {"t": "blank", "n": 1},
+            {"t": "field", "label": "Студент", "value": "{group}   {student}", "hint": "(група, підпис, дата, прізвище, ініціали)",
+             "repeat": "students", "repeat_label": True},
+            {"t": "push"},
+            {"t": "line", "text": "{city_year}"},
         ],
     },
     "school_lab": {
@@ -183,10 +215,15 @@ def _variables(report, template) -> dict:
     values = {f: (getattr(report, f, "") or "").strip() for f in FIELDS}
     year = _year(report)
     city = values["city"]
+    words = course_words(report)
     values.update(
         year=year,
         city_dash_year=f"{city} – {year}" if city else year,
         city_year_r=f"{city} {year} р." if city else f"{year} р.",
+        city_year=f"{city} {year}" if city else year,
+        course_title=words["title"],
+        topic_hint=words["topic_hint"],
+        doc_code=report_meta_value(report, "doc_code"),
     )
     for word, forms in template["words"].items():
         if forms["of"] == "student":
@@ -223,6 +260,7 @@ def resolve_title_page(report) -> list[dict]:
     template = TEMPLATES[template_id(report)]
     values = _variables(report, template)
     names = student_names(report) or [""]
+    repeats = {"students": ("student", names), "teachers": ("supervisor", supervisors(report) or [""])}
 
     def lines(items):
         out = []
@@ -250,11 +288,13 @@ def resolve_title_page(report) -> list[dict]:
         elif kind == "field":
             if el.get("optional") and not _fill(el["value"], values)[1]:
                 continue
-            for n, name in enumerate(names if el.get("repeat") == "students" else [None]):
-                label = _fill(el["label"], values)[0] if n == 0 else ""
-                value = _fill(el["value"], {**values, "student": name or ""})[0]
-                resolved.append({"t": "field", "label": label, "value": value, "hint": el.get("hint", ""),
-                                 "indent": n > 0})
+            var, items = repeats.get(el.get("repeat"), (None, [None]))
+            for n, item in enumerate(items):
+                label = _fill(el["label"], values)[0] if n == 0 or el.get("repeat_label") else ""
+                value = _fill(el["value"], {**values, var: item or ""} if var else values)[0]
+                resolved.append({"t": "field", "label": label, "value": value,
+                                 "hint": _fill(el.get("hint", ""), values)[0],
+                                 "indent": n > 0 and not el.get("repeat_label")})
         elif kind == "columns":
             resolved.append({"t": "columns", "left": lines(el["left"]), "right": lines(el["right"])})
         else:

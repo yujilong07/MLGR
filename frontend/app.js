@@ -99,6 +99,7 @@ const ICONS = {
   edit:     '<svg class="icon" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   sigma:    '<svg class="icon" viewBox="0 0 24 24"><path d="M18 5H6l6 7-6 7h12"/></svg>',
   text:     '<svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  table:    '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 10v10M15 10v10"/></svg>',
   python:   '<svg class="icon" viewBox="0 0 24 24"><path d="M12 3c-3.5 0-4 1.5-4 3v2h4.5v1H6c-2 0-3 1.5-3 4s1 4 3 4h2v-2.5c0-1.4 1.1-2.5 2.5-2.5h4c1.4 0 2.5-1.1 2.5-2.5V6c0-1.5-1.5-3-5-3z"/><path d="M12 21c3.5 0 4-1.5 4-3v-2h-4.5v-1H18c2 0 3-1.5 3-4"/></svg>',
   eye:      '<svg class="icon" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
@@ -152,7 +153,7 @@ function inlineHtml(line) {
 /* ── content model: a section is an ordered list of blocks ── */
 // {type: 'text', text} | {type: 'code', code, language} | {type: 'formula', latex}
 function itemBlocks(item) {
-  if (Array.isArray(item?.blocks)) return item.blocks.filter(b => ['text', 'code', 'formula'].includes(b?.type));
+  if (Array.isArray(item?.blocks)) return item.blocks.filter(b => ['text', 'code', 'formula', 'table'].includes(b?.type));
   const out = [];
   if (item?.text?.trim()) out.push({ type: 'text', text: item.text });
   if (item?.code?.trim()) out.push({ type: 'code', code: item.code, language: item.language || 'python' });
@@ -162,29 +163,42 @@ function itemBlocks(item) {
 const newTextBlock    = () => ({ type: 'text', text: '' });
 const newCodeBlock    = () => ({ type: 'code', code: '', language: 'python' });
 const newFormulaBlock = () => ({ type: 'formula', latex: '' });
+const newTableBlock   = () => ({ type: 'table', caption: '', header: 1, rows: [['', '', ''], ['', '', '']] });
+// ДСТУ 3008:2015: appendices use the Ukrainian alphabet without Ґ, Є, З, І, Ї, Й, О, Ч, Ь
+const APPENDIX_LETTERS = 'АБВГДЕЖИКЛМНПРСТУФХЦШЩЮЯ';
 const newItem = withSubs => ({ title: '', blocks: [newTextBlock()], ...(withSubs ? { subsections: [] } : {}) });
 
+// Sections nest three levels deep (1, 1.1, 1.1.1); appendix: true marks ДОДАТОК А, Б, ...
 function toEditableSections(raw) {
-  const item = s => {
-    const blocks = itemBlocks(s).map(b => ({ ...b }));
-    return { title: s.title || '', blocks: blocks.length ? blocks : [newTextBlock()] };
+  const item = (s, depth) => {
+    const blocks = itemBlocks(s).map(b => b.type === 'table'
+      ? { ...b, rows: (b.rows || []).map(r => [...r]) } : { ...b });
+    const out = { title: s.title || '', blocks: blocks.length ? blocks : [newTextBlock()] };
+    if (depth < 3) out.subsections = (s.subsections || []).map(c => item(c, depth + 1));
+    if (depth === 1 && s.appendix) out.appendix = true;
+    return out;
   };
-  return (raw || []).map(s => ({ ...item(s), subsections: (s.subsections || []).map(item) }));
+  return (raw || []).map(s => item(s, 1));
 }
 
 function sectionsPayload(list) {
   const blocks = item => item.blocks
     .map(b => b.type === 'text' ? { type: 'text', text: b.text || '' }
       : b.type === 'code' ? { type: 'code', code: b.code || '', language: b.language || 'python' }
+      : b.type === 'table' ? { type: 'table', caption: b.caption || '', header: b.header ?? 1, rows: b.rows || [] }
       : { type: 'formula', latex: b.latex || '' })
     .filter(b => !(b.type === 'text' && !b.text.trim()));
-  return list.map(s => ({
+  const item = (s, depth) => ({
     title: s.title, blocks: blocks(s),
-    subsections: (s.subsections || []).map(b => ({ title: b.title, blocks: blocks(b) })),
-  }));
+    ...(depth < 3 ? { subsections: (s.subsections || []).map(c => item(c, depth + 1)) } : {}),
+    ...(depth === 1 && s.appendix ? { appendix: true } : {}),
+  });
+  return list.map(s => item(s, 1));
 }
 
-const blockFilled = b => Boolean((b.type === 'text' ? b.text : b.type === 'code' ? b.code : b.latex)?.trim());
+const blockFilled = b => b.type === 'table'
+  ? (b.rows || []).some(r => r.some(c => (c || '').trim())) || Boolean((b.caption || '').trim())
+  : Boolean((b.type === 'text' ? b.text : b.type === 'code' ? b.code : b.latex)?.trim());
 const itemText = item => (item.blocks || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
 const hasContent = item => Boolean(item.title?.trim() || item.blocks?.some(blockFilled) || item.subsections?.length);
 
@@ -361,6 +375,10 @@ function titlePageHtml(doc, editAttr, editable) {
   const field = name => `<span ${editAttr(`doc|${name}`, FIELD_PH[name] || name)}>${esc(doc[name] || '')}</span>`;
   const namesBlock = () =>
     `<span class="dv-names dv-text" ${editAttr('doc|student_name', 'Прізвище І. Б. (кожен з нового рядка)', 'paras')}>${mathParas(doc.student_name)}</span>`;
+  const teachersBlock = () =>
+    `<span class="dv-names dv-text" ${editAttr('doc|teacher', 'посада Прізвище І. Б. (кожен з нового рядка)', 'paras')}>${mathParas(doc.teacher)}</span>`;
+  const cw = courseWords(doc.meta);
+  const computed = { course_title: cw.title, topic_hint: cw.topic_hint, doc_code: doc.meta?.doc_code || '' };
   const city = editable || doc.city ? field('city') : '';
 
   // Text with {placeholders} -> HTML; empty: whether all placeholders were empty
@@ -379,6 +397,15 @@ function titlePageHtml(doc, editAttr, editable) {
       } else if (key === 'student' || key === 'students') {
         html += namesBlock();
         empty = empty && !names.length;
+      } else if (key === 'supervisor') {
+        html += teachersBlock();
+        empty = empty && !docLines(doc.teacher).length;
+      } else if (key in computed) {
+        html += esc(computed[key]);
+        if (computed[key]) empty = false;
+      } else if (key === 'city_year') {
+        html += city ? `${city} ${year}` : year;
+        empty = false;
       } else if (key === 'city_dash_year') {
         html += city ? `${city} – ${year}` : year;
         empty = false;
@@ -407,7 +434,7 @@ function titlePageHtml(doc, editAttr, editable) {
     if (el.t === 'field') {
       if (!visible(el, el.value)) return '';
       return `<div class="dv-field"><span class="lbl">${fill(el.label).html}</span><span class="u">${fill(el.value).html}</span></div>`
-        + (el.hint ? `<p class="dv-hint">${esc(el.hint)}</p>` : '');
+        + (el.hint ? `<p class="dv-hint">${fill(el.hint).html}</p>` : '');
     }
     if (el.t === 'columns') {
       const col = lines => lines.map(item => {
@@ -789,7 +816,7 @@ function renderGrid(query = '') {
       <div class="rc-icon">${ICONS.file}</div>
       <div class="rc-title">${esc(r.title || 'Без назви')}</div>
       <div class="rc-meta">
-        ${r.kind === 'essay' ? '<span class="badge badge-kind">Реферат</span>' : ''}
+        ${r.kind === 'essay' ? '<span class="badge badge-kind">Реферат</span>' : r.kind === 'course' ? '<span class="badge badge-kind">Курсова</span>' : ''}
         <span class="badge">${esc(r.discipline || 'Без дисципліни')}</span>
         ${r.group   ? `<span>${esc(r.group)}</span>` : ''}
         ${r.teacher ? `<span class="dot-sep">${esc(r.teacher)}</span>` : ''}
@@ -840,13 +867,19 @@ async function openNewChooser() {
           <b>Реферат</b>
           <span>Вступ, розділи з нової сторінки, висновки, перелік посилань (ДСТУ 3008:2015). Титулка «РЕФЕРАТ на тему».</span>
         </a>
+        <a class="chooser-card" href="editor.html?kind=course" data-uni-only>
+          <span class="chooser-ico">${ICONS.table}</span>
+          <b>Курсова робота / проєкт</b>
+          <span>Пояснювальна записка: кілька керівників, завдання й календарний план, 3 рівні заголовків, таблиці, додатки.</span>
+        </a>
       </div>
-      <p class="text-sm text-muted chooser-note">В обох можна писати формули ($x^2$ у тексті або окремим блоком) і перемкнутись у режим LaTeX.</p>
+      <p class="text-sm text-muted chooser-note">Скрізь можна писати формули ($x^2$ у тексті або окремим блоком), додавати таблиці й перемкнутись у режим LaTeX.</p>
     </div>`;
   const close = () => { document.removeEventListener('keydown', onKey, true); box.remove(); };
   const onKey = e => { if (e.key === 'Escape') close(); };
   const setLevel = lv => {
     box.querySelectorAll('[data-level]').forEach(b => b.classList.toggle('on', b.dataset.level === lv));
+    box.querySelectorAll('[data-uni-only]').forEach(c => { c.hidden = lv === 'school'; });
     box.querySelectorAll('.chooser-card').forEach(a => {
       const kind = new URL(a.href).searchParams.get('kind');
       a.href = `editor.html?kind=${kind}&level=${lv}`;
@@ -902,6 +935,8 @@ const KIND_TEXT = {
            hint: 'Титулка, зміст і нумерація складуться автоматично' },
   essay: { heading: 'Реферат', title: 'Тема реферату', titlePh: 'Методи оптимізації нейронних мереж',
            hint: 'ДСТУ 3008:2015: кожен розділ з нової сторінки, нумерація в межах розділу' },
+  course: { heading: 'Курсова', title: 'Тема курсової', titlePh: 'Аналіз навантаженості плоских важільних механізмів',
+            hint: 'Титулка, завдання й календарний план, 3 рівні заголовків, таблиці, додатки' },
 };
 
 async function initEditor() {
@@ -957,15 +992,19 @@ async function initEditor() {
     if (editorMode === 'latex') syncTexSection(['Висновки', 'Висновок'], e.target.value);
   });
 
-  const secs = document.getElementById('sections-container');
-  secs?.addEventListener('click', onImageCardEvent);
-  secs?.addEventListener('input', onImageCardEvent);
-  secs?.addEventListener('click', onBlocksClick);
-  secs?.addEventListener('input', onBlocksInput);
-  secs?.addEventListener('change', onBlocksInput);
-  secs?.addEventListener('keydown', e => {
-    if (e.key === 'Tab' && e.target.matches('.code-wrap textarea')) { e.preventDefault(); insertAtCursor(e.target, '    '); }
-  });
+  for (const secs of [document.getElementById('sections-container'), document.getElementById('appendix-container')]) {
+    secs?.addEventListener('click', onImageCardEvent);
+    secs?.addEventListener('input', onImageCardEvent);
+    secs?.addEventListener('click', onBlocksClick);
+    secs?.addEventListener('input', onBlocksInput);
+    secs?.addEventListener('change', onBlocksInput);
+    secs?.addEventListener('paste', onTablePaste);
+    secs?.addEventListener('keydown', e => {
+      if (e.key === 'Tab' && e.target.matches('.code-wrap textarea')) { e.preventDefault(); insertAtCursor(e.target, '    '); }
+    });
+  }
+  document.getElementById('btn-add-app')?.addEventListener('click', addAppendix);
+  bindCourseCard();
   document.getElementById('unplaced')?.addEventListener('change', placeImage);
 
   // Text fields grow with their content instead of scrolling inside a small box
@@ -1003,7 +1042,7 @@ async function initEditor() {
     if (p.student_gender) setGender('student', p.student_gender);
     updateStudentSeg();
     setLevel(params.get('level') || p.level || 'university', { quiet: true });
-    setKind(params.get('kind') === 'essay' ? 'essay' : 'lab');
+    setKind(KIND_TEXT[params.get('kind')] ? params.get('kind') : 'lab');
     setMode('form');
     sections = [];
     renderSections();
@@ -1023,7 +1062,8 @@ function setLevel(level, { quiet = false } = {}) {
   // Same form, school words: Клас, Учень, Вчитель, Предмет
   document.querySelectorAll('[data-uni][data-school]').forEach(el => { if (!el.matches('button')) el.textContent = school ? el.dataset.school : el.dataset.uni; });
   document.querySelectorAll('[data-uni-ph]').forEach(el => { el.placeholder = school ? el.dataset.schoolPh : el.dataset.uniPh; });
-  if (!quiet) { setKind(reportKind); }
+  // there are no course works at school
+  if (!quiet) { setKind(school && reportKind === 'course' ? 'essay' : reportKind); }
 }
 
 async function rememberProfile() {
@@ -1053,12 +1093,20 @@ function setKind(kind) {
   document.getElementById('lbl-title').textContent = t.title;
   document.getElementById('f-title').placeholder = t.titlePh;
   document.getElementById('kind-hint').textContent = t.hint;
-  document.getElementById('refs-badge').textContent = kind === 'essay' ? 'обов’язковий за методичкою' : 'необов’язково';
+  document.getElementById('refs-badge').textContent = kind === 'lab' ? 'необов’язково' : 'обов’язковий за методичкою';
   document.querySelectorAll('.seg[data-gender="teacher"] [data-g]').forEach(b => {
-    b.textContent = reportLevel === 'school' ? b.dataset.school : b.dataset[kind];
+    b.textContent = reportLevel === 'school' ? b.dataset.school : b.dataset[kind === 'course' ? 'essay' : kind];
   });
+  // Course work: several supervisors, each "посада Прізвище І. Б." on its own line
+  const teacherLabel = document.querySelector('label[for="f-teacher"]');
+  if (teacherLabel) teacherLabel.innerHTML = kind === 'course'
+    ? 'Керівники <span class="text-muted">— кожен з нового рядка: посада і ПІБ</span>'
+    : esc(reportLevel === 'school' ? teacherLabel.dataset.school : teacherLabel.dataset.uni);
+  const teacher = document.getElementById('f-teacher');
+  if (teacher) teacher.placeholder = kind === 'course' ? 'проф. Табакова І. С.' : 'Іваненко І. І.';
   const date = document.getElementById('f-date');
-  if (kind === 'essay' && reportLevel === 'university' && date && !date.value) date.value = new Date().toLocaleDateString('uk-UA');
+  if (kind !== 'lab' && reportLevel === 'university' && date && !date.value) date.value = new Date().toLocaleDateString('uk-UA');
+  if (kind === 'course') fillCourseCard();
   if (editorMode === 'latex' && tex.source) parseTexSoon();
   renderSections();
   document.querySelectorAll('.main textarea').forEach(autoGrow);
@@ -1099,7 +1147,7 @@ function currentDoc() {
     teacher: v('f-teacher'), teacher_gender: genders.teacher, teacher_position: v('f-position'),
     student_name: v('f-student'), student_gender: genders.student, work_date: v('f-date'),
     goal: v('f-goal'), introduction: v('f-intro'), conclusion: v('ai-output'),
-    bibliography: refsList(), sections,
+    bibliography: refsList(), sections, meta: courseMeta,
   };
 }
 
@@ -1176,10 +1224,12 @@ async function loadReport(id) {
     updateStudentSeg();
 
     sections = toEditableSections(r.sections);
+    courseMeta = r.meta && typeof r.meta === 'object' ? { ...r.meta } : {};
+    fillCourseCard();
     reportImages = imgs || [];
     setMode(r.editor_mode === 'latex' ? 'latex' : 'form');
     setLevel(r.level, { quiet: true });
-    setKind(r.kind === 'essay' ? 'essay' : 'lab');
+    setKind(KIND_TEXT[r.kind] ? r.kind : 'lab');
     if (editorMode === 'latex') {
       tex.source = r.latex_source || '';
       renderTexPane();
@@ -1193,6 +1243,16 @@ async function loadReport(id) {
 /* ── image paths follow their sections when the structure changes ── */
 // mapPath("1.0") → new path, or null when the image's section is gone
 const pathMaps = {
+  // the item at `path` is gone: its images go, later siblings move up by one
+  removeItem: path => p => {
+    if (p === 'u') return p;
+    const t = path.split('.').map(Number), q = p.split('.').map(Number);
+    const d = t.length;
+    if (q.length < d || t.slice(0, d - 1).some((x, k) => q[k] !== x)) return p;
+    if (q[d - 1] === t[d - 1]) return null;
+    if (q[d - 1] > t[d - 1]) q[d - 1] -= 1;
+    return q.join('.');
+  },
   removeSection: i => p => {
     if (p === 'u') return p;
     const [a, b] = p.split('.').map(Number);
@@ -1283,18 +1343,50 @@ function openLightbox(list, startId) {
 }
 
 /* ── sections ── */
-// path: "0" — section, "0.1" — its subsection (same format the backend stores for images)
+// path: "0" — section, "0.1" — its subsection, "0.1.2" — a point (1.2.3); the same format
+// the backend stores for images. Sections with appendix: true are ДОДАТОК А, Б, ...
 function blockAt(path) {
-  const [i, j] = String(path).split('.').map(Number);
-  return j === undefined ? sections[i] : sections[i].subsections[j];
+  const idx = String(path).split('.').map(Number);
+  let item = sections[idx[0]];
+  for (const k of idx.slice(1)) item = item?.subsections?.[k];
+  return item;
+}
+
+function parentList(path) {
+  const idx = String(path).split('.').map(Number);
+  const list = idx.length === 1 ? sections : blockAt(idx.slice(0, -1).join('.')).subsections;
+  return { list, index: idx[idx.length - 1] };
+}
+
+// "1", "2" for sections, "А", "Б" for appendices — by position in the array
+function sectionLabels(list = sections) {
+  const labels = {};
+  let n = 0, a = 0;
+  list.forEach((s, i) => { labels[i] = s.appendix ? APPENDIX_LETTERS[a++ % APPENDIX_LETTERS.length] : String(++n); });
+  return labels;
+}
+
+function labelOf(path) {
+  const idx = String(path).split('.').map(Number);
+  return [sectionLabels()[idx[0]], ...idx.slice(1).map(k => k + 1)].join('.');
 }
 
 function addSection() {
   sections.push(newItem(true));
   renderSections();
-  const last = document.querySelectorAll('#sections-container > .section-item');
-  last[last.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  last[last.length - 1]?.querySelector('.sec-name')?.focus({ preventScroll: true });
+  focusItem(String(sections.length - 1));
+}
+
+function addAppendix() {
+  sections.push({ ...newItem(true), appendix: true });
+  renderSections();
+  focusItem(String(sections.length - 1));
+}
+
+function focusItem(path) {
+  const el = document.getElementById(`sec-${path.replaceAll('.', '-')}`);
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el?.querySelector('.sec-name')?.focus({ preventScroll: true });
 }
 
 async function structureChanged(mapPath) {
@@ -1305,32 +1397,37 @@ async function structureChanged(mapPath) {
   await saveReport({ quiet: true });   // images are already moved on the server — keep sections in step
 }
 
-async function removeSection(idx) {
-  if (hasContent(sections[idx]) && !confirm(`Видалити розділ ${idx + 1} разом із його вмістом і скріншотами?`)) return;
-  sections.splice(idx, 1);
-  await structureChanged(pathMaps.removeSection(idx));
+async function removeItem(path) {
+  const item = blockAt(path);
+  const what = String(path).includes('.') ? (String(path).split('.').length === 2 ? 'підрозділ' : 'пункт')
+    : item.appendix ? 'додаток' : 'розділ';
+  if (hasContent(item) && !confirm(`Видалити ${what} ${labelOf(path)} разом із вмістом і скріншотами?`)) return;
+  const { list, index } = parentList(path);
+  list.splice(index, 1);
+  await structureChanged(pathMaps.removeItem(String(path)));
 }
+const removeSection = idx => removeItem(String(idx));
+const removeSubsection = (i, j) => removeItem(`${i}.${j}`);
 
+// Up / down among sections of the same kind (sections with sections, appendices with appendices)
 async function moveSection(idx, dir) {
-  const k = idx + dir;
+  const app = Boolean(sections[idx].appendix);
+  let k = idx + dir;
+  while (k >= 0 && k < sections.length && Boolean(sections[k].appendix) !== app) k += dir;
   if (k < 0 || k >= sections.length) return;
   [sections[idx], sections[k]] = [sections[k], sections[idx]];
   await structureChanged(pathMaps.swapSections(idx, k));
 }
 
-function addSubsection(i) {
-  sections[i].subsections.push(newItem(false));
+function addChild(path) {
+  const item = blockAt(path);
+  const depth = String(path).split('.').length;
+  item.subsections = item.subsections || [];
+  item.subsections.push(newItem(depth < 2));
   renderSections();
-  const el = document.getElementById(`sec-${i}-${sections[i].subsections.length - 1}`);
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  el?.querySelector('.sec-name')?.focus({ preventScroll: true });
+  focusItem(`${path}.${item.subsections.length - 1}`);
 }
-
-async function removeSubsection(i, j) {
-  if (hasContent(sections[i].subsections[j]) && !confirm(`Видалити підрозділ ${i + 1}.${j + 1}?`)) return;
-  sections[i].subsections.splice(j, 1);
-  await structureChanged(pathMaps.removeSubsection(i, j));
-}
+const addSubsection = i => addChild(String(i));
 
 function setBlockTitle(path, value) {
   blockAt(path).title = value;
@@ -1339,10 +1436,32 @@ function setBlockTitle(path, value) {
 }
 
 const LANGS = ['python','javascript','typescript','java','cpp','c','sql','bash','html','css'];
-const BLOCK_LABEL = { text: 'Текст', code: 'Код', formula: 'Формула' };
+const BLOCK_LABEL = { text: 'Текст', code: 'Код', formula: 'Формула', table: 'Таблиця' };
 
-/* One content block of a section: text / code / formula */
-function blockCardHtml(path, k, b, total, formulaNo) {
+function tableEditorHtml(b, no) {
+  const rows = b.rows?.length ? b.rows : [['', '']];
+  const header = b.header ?? 1;
+  return `
+      <div class="tbl-box">
+        <div class="tbl-cap-row"><span class="tbl-no">Таблиця ${no} –</span>
+          <input class="tbl-cap" data-f="caption" value="${esc(b.caption || '')}" placeholder="Назва таблиці"></div>
+        <div class="tbl-scroll"><table class="tbl-edit">
+          ${rows.map((row, r) => `<tr class="${r < header ? 'is-head' : ''}">${row.map((c, ci) => `
+            <td><textarea rows="1" data-cell="${r},${ci}" placeholder="${r < header ? 'Заголовок' : ''}">${esc(c)}</textarea></td>`).join('')}
+            <td class="tbl-x"><button type="button" data-tact="delrow" data-r="${r}" title="Видалити рядок" ${rows.length < 2 ? 'disabled' : ''}>${ICONS.x}</button></td></tr>`).join('')}
+          <tr class="tbl-coltools">${rows[0].map((_, ci) => `<td><button type="button" data-tact="delcol" data-c="${ci}" title="Видалити стовпець" ${rows[0].length < 2 ? 'disabled' : ''}>${ICONS.x}</button></td>`).join('')}<td></td></tr>
+        </table></div>
+        <div class="tbl-actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-tact="addrow">${ICONS.plus} Рядок</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-tact="addcol">${ICONS.plus} Стовпець</button>
+          <label class="check"><input type="checkbox" data-tact="header" ${header ? 'checked' : ''}> Перший рядок — заголовок</label>
+          <span class="text-sm text-muted">Можна вставити таблицю з Excel чи Google Sheets — просто Ctrl+V у клітинку</span>
+        </div>
+      </div>`;
+}
+
+/* One content block of a section: text / code / formula / table */
+function blockCardHtml(path, k, b, total, no) {
   const key = `${path}|${k}`;
   const tools = `
     <span class="blk-tools">
@@ -1366,6 +1485,8 @@ function blockCardHtml(path, k, b, total, formulaNo) {
         </div>
         <textarea spellcheck="false" data-f="code" placeholder="Вставте код">${esc(b.code)}</textarea>
       </div>`;
+  } else if (b.type === 'table') {
+    body = tableEditorHtml(b, no);
   } else {
     body = `
       <div class="formula-box">
@@ -1373,7 +1494,7 @@ function blockCardHtml(path, k, b, total, formulaNo) {
         <div class="formula-row">
           <textarea class="formula-src" rows="1" spellcheck="false" data-f="latex"
                     placeholder="\\frac{1}{n}\\sum_{i=1}^{n} x_i">${esc(b.latex)}</textarea>
-          <span class="formula-no">(${formulaNo})</span>
+          <span class="formula-no">(${no})</span>
         </div>
         <div class="snippets">
           ${MATH_SNIPPETS.map(([label], n) => `<button type="button" class="snip" data-snip="${n}" title="${esc(MATH_SNIPPETS[n][1])}">${esc(label)}</button>`).join('')}
@@ -1389,10 +1510,13 @@ function blockCardHtml(path, k, b, total, formulaNo) {
     </div>`;
 }
 
-function itemBodyHtml(path, item, formulaCounter) {
-  const id = String(path).replace('.', '-');
+// ctx: {label: section label "1" / "А", local: number tables within the section, f: formula n, t: {n} tables}
+function itemBodyHtml(path, item, ctx) {
+  const id = String(path).replaceAll('.', '-');
   const blocks = item.blocks.map((b, k) => {
-    const no = b.type === 'formula' ? `${Number(String(path).split('.')[0]) + 1}.${++formulaCounter.n}` : '';
+    let no = '';
+    if (b.type === 'formula') no = `${ctx.label}.${++ctx.f}`;
+    if (b.type === 'table') no = ctx.local ? `${ctx.label}.${++ctx.t.n}` : String(++ctx.t.n);
     return blockCardHtml(path, k, b, item.blocks.length, no);
   }).join('');
   return `
@@ -1402,9 +1526,10 @@ function itemBodyHtml(path, item, formulaCounter) {
           <button type="button" class="btn btn-ghost btn-sm" data-add="text" data-path="${path}">${ICONS.text} Текст</button>
           <button type="button" class="btn btn-ghost btn-sm" data-add="code" data-path="${path}">${ICONS.code} Код</button>
           <button type="button" class="btn btn-ghost btn-sm" data-add="formula" data-path="${path}">${ICONS.sigma} Формула</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-add="table" data-path="${path}">${ICONS.table} Таблиця</button>
         </div>
         <div class="form-group">
-          <label>Рисунки <span class="text-muted">— ідуть після тексту розділу, у цьому порядку; клік — перегляд</span></label>
+          <label>Рисунки <span class="text-muted">— ідуть після тексту, у цьому порядку; клік — перегляд</span></label>
           <div class="upload-zone" onclick="triggerUpload('${path}')"
                ondragover="event.preventDefault(); this.classList.add('drag')"
                ondragleave="this.classList.remove('drag')"
@@ -1417,51 +1542,58 @@ function itemBodyHtml(path, item, formulaCounter) {
         </div>`;
 }
 
-function renderSections() {
-  const container = document.getElementById('sections-container');
-  if (!container) return;
+const CHILD_NAME = { 1: 'Підрозділ', 2: 'Пункт' };
 
-  if (!sections.length) {
-    container.innerHTML = `<p class="text-sm text-muted" style="text-align:center;padding:14px 0">Розділів ще немає. Додайте перший — наприклад, «${reportKind === 'essay' ? 'Аналіз предметної області' : 'Хід роботи'}».</p>`;
-  } else {
-    container.innerHTML = sections.map((sec, i) => {
-      const counter = { n: 0 };     // formulas are numbered within a section: (1.1), (1.2)
-      return `
-    <div class="section-item" id="sec-${i}">
+function itemHtml(path, item, depth, label, ctx) {
+  const id = path.replaceAll('.', '-');
+  const ph = depth === 1 ? (item.appendix ? 'Назва додатка...' : 'Назва розділу...')
+    : depth === 2 ? 'Назва підрозділу...' : 'Назва пункту...';
+  const kids = depth < 3
+    ? (item.subsections || []).map((sub, k) => itemHtml(`${path}.${k}`, sub, depth + 1, `${label}.${k + 1}`, ctx)).join('')
+    : '';
+  const addKid = depth < 3
+    ? `<div><button class="btn btn-ghost btn-sm" onclick="addChild('${path}')">${ICONS.plus} ${CHILD_NAME[depth]} ${label}.${(item.subsections || []).length + 1}</button></div>`
+    : '';
+  return `
+    <div class="section-item ${depth > 1 ? 'subsection-item' : ''} depth-${depth}" id="sec-${id}">
       <div class="section-head">
-        <span class="sec-num">${i + 1}</span>
-        <input class="sec-name" placeholder="Назва розділу..."
-               value="${esc(sec.title)}" oninput="setBlockTitle('${i}', this.value)">
-        <button class="btn btn-ghost btn-sm" onclick="removeSection(${i})" title="Видалити розділ">${ICONS.trash}</button>
+        <span class="sec-num">${depth === 1 && item.appendix ? `Додаток ${label}` : label}</span>
+        <input class="sec-name" placeholder="${ph}" value="${esc(item.title)}" oninput="setBlockTitle('${path}', this.value)">
+        <button class="btn btn-ghost btn-sm" onclick="removeItem('${path}')" title="Видалити">${ICONS.trash}</button>
       </div>
       <div class="section-body">
-        ${itemBodyHtml(`${i}`, sec, counter)}
-        ${sec.subsections.map((sub, j) => `
-        <div class="section-item subsection-item" id="sec-${i}-${j}">
-          <div class="section-head">
-            <span class="sec-num">${i + 1}.${j + 1}</span>
-            <input class="sec-name" placeholder="Назва підрозділу..."
-                   value="${esc(sub.title)}" oninput="setBlockTitle('${i}.${j}', this.value)">
-            <button class="btn btn-ghost btn-sm" onclick="removeSubsection(${i},${j})" title="Видалити підрозділ">${ICONS.trash}</button>
-          </div>
-          <div class="section-body">
-            ${itemBodyHtml(`${i}.${j}`, sub, counter)}
-          </div>
-        </div>`).join('')}
-        <div><button class="btn btn-ghost btn-sm" onclick="addSubsection(${i})">${ICONS.plus} Підрозділ ${i + 1}.${sec.subsections.length + 1}</button></div>
+        ${itemBodyHtml(path, item, ctx)}
+        ${kids}
+        ${addKid}
       </div>
     </div>`;
-    }).join('');
-    new Set(reportImages.map(i => i.section_path)).forEach(renderImageGrid);
-    container.querySelectorAll('textarea').forEach(autoGrow);
-  }
+}
+
+function renderSections() {
+  const container = document.getElementById('sections-container');
+  const appBox = document.getElementById('appendix-container');
+  if (!container) return;
+  const labels = sectionLabels();
+  const local = reportKind !== 'lab';
+  const shared = { n: 0 };       // lab report: tables numbered through the document
+  const html = { main: [], app: [] };
+  sections.forEach((s, i) => {
+    const ctx = { label: labels[i], f: 0, local: local || s.appendix, t: (local || s.appendix) ? { n: 0 } : shared };
+    html[s.appendix ? 'app' : 'main'].push(itemHtml(String(i), s, 1, labels[i], ctx));
+  });
+  container.innerHTML = html.main.length ? html.main.join('')
+    : `<p class="text-sm text-muted" style="text-align:center;padding:14px 0">Розділів ще немає. Додайте перший — наприклад, «${reportKind === 'lab' ? 'Хід роботи' : 'Аналіз предметної області'}».</p>`;
+  if (appBox) appBox.innerHTML = html.app.length ? html.app.join('')
+    : '<p class="text-sm text-muted">Додатків немає. Сюди виносять код програми, великі таблиці, креслення — кожен додаток почнеться з нової сторінки.</p>';
+  new Set(reportImages.map(i => i.section_path)).forEach(renderImageGrid);
+  document.querySelectorAll('#sections-container textarea, #appendix-container textarea').forEach(autoGrow);
   renderUnplaced();
   renderOutline();
   updateReadiness();
   refreshLive();
 }
 
-/* ── block events (delegated from #sections-container) ── */
+/* ── block events (delegated from the sections and appendix containers) ── */
 const blockFromEl = el => {
   const card = el.closest('[data-blk]');
   if (!card) return {};
@@ -1471,6 +1603,19 @@ const blockFromEl = el => {
 
 const checkTimers = new WeakMap();
 function onBlocksInput(e) {
+  const cell = e.target.dataset?.cell;
+  if (cell !== undefined) {
+    const { block } = blockFromEl(e.target);
+    const [r, c] = cell.split(',').map(Number);
+    if (block?.rows?.[r]) block.rows[r][c] = e.target.value;
+    return;
+  }
+  if (e.target.dataset?.tact === 'header') {
+    const { block } = blockFromEl(e.target);
+    block.header = e.target.checked ? 1 : 0;
+    renderSections();
+    return;
+  }
   const field = e.target.dataset?.f;
   if (!field) return;
   const { card, block } = blockFromEl(e.target);
@@ -1499,17 +1644,46 @@ function onBlocksInput(e) {
   }
 }
 
+// Ctrl+V of several cells from Excel / Google Sheets fills the table from that cell on
+function onTablePaste(e) {
+  const cell = e.target.dataset?.cell;
+  if (cell === undefined) return;
+  const text = e.clipboardData.getData('text/plain').replace(/\r/g, '').replace(/\n$/, '');
+  if (!/[\t\n]/.test(text)) return;
+  e.preventDefault();
+  const { block, path, k } = blockFromEl(e.target);
+  const [r0, c0] = cell.split(',').map(Number);
+  const grid = text.split('\n').map(line => line.split('\t'));
+  const width = Math.max(block.rows[0].length, c0 + Math.max(...grid.map(g => g.length)));
+  while (block.rows.length < r0 + grid.length) block.rows.push([]);
+  block.rows = block.rows.map(row => [...row, ...Array(Math.max(0, width - row.length)).fill('')]);
+  grid.forEach((line, dr) => line.forEach((v, dc) => { block.rows[r0 + dr][c0 + dc] = v.trim(); }));
+  renderSections();
+  document.querySelector(`[data-blk="${path}|${k}"] [data-cell="${r0},${c0}"]`)?.focus();
+  toast(`Вставлено ${grid.length} × ${Math.max(...grid.map(g => g.length))}`);
+}
+
 function onBlocksClick(e) {
   const add = e.target.closest('[data-add]');
   if (add) {
     const item = blockAt(add.dataset.path);
-    const make = { text: newTextBlock, code: newCodeBlock, formula: newFormulaBlock }[add.dataset.add];
+    const make = { text: newTextBlock, code: newCodeBlock, formula: newFormulaBlock, table: newTableBlock }[add.dataset.add];
     item.blocks.push(make());
     renderSections();
-    const cards = document.querySelectorAll(`[data-blk^="${add.dataset.path}|"]`);
-    const last = [...cards].filter(c => c.dataset.blk.split('|')[0] === add.dataset.path).pop();
+    const last = document.querySelector(`[data-blk="${add.dataset.path}|${item.blocks.length - 1}"]`);
     last?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    last?.querySelector('textarea')?.focus({ preventScroll: true });
+    last?.querySelector('textarea, input')?.focus({ preventScroll: true });
+    return;
+  }
+  const tact = e.target.closest('button[data-tact]');
+  if (tact) {
+    const { block } = blockFromEl(tact);
+    const width = block.rows[0]?.length || 1;
+    if (tact.dataset.tact === 'addrow') block.rows.push(Array(width).fill(''));
+    if (tact.dataset.tact === 'addcol') block.rows.forEach(row => row.push(''));
+    if (tact.dataset.tact === 'delrow' && block.rows.length > 1) block.rows.splice(Number(tact.dataset.r), 1);
+    if (tact.dataset.tact === 'delcol' && width > 1) block.rows.forEach(row => row.splice(Number(tact.dataset.c), 1));
+    renderSections();
     return;
   }
   const snip = e.target.closest('[data-snip]');
@@ -1551,25 +1725,32 @@ function renderOutline() {
     nav.innerHTML = `<p class="outline-empty">${editorMode === 'latex' ? 'Розділи з\'являться тут, щойно ви напишете \\section{…}.' : 'Тут з\'явиться зміст звіту. Розділи можна додавати звідси, не прокручуючи сторінку.'}</p>`;
     return;
   }
-  const n = sections.length;
   const latex = editorMode === 'latex';
-  nav.innerHTML = sections.map((s, i) => `
+  const labels = sectionLabels();
+  const row = (s, i) => {
+    const same = sections.map((x, k) => [x, k]).filter(([x]) => Boolean(x.appendix) === Boolean(s.appendix)).map(([, k]) => k);
+    const first = same[0] === i, last = same[same.length - 1] === i;
+    return `
     <div class="ol-item">
       <a href="#sec-${i}" class="ol-link" data-target="sec-${i}" data-sec="${i}">
-        <span class="ol-num">${i + 1}</span>
+        <span class="ol-num">${labels[i]}</span>
         <span class="ol-title ${s.title.trim() ? '' : 'untitled'}">${esc(s.title.trim() || 'Без назви')}</span>
       </a>
       ${latex ? '' : `<span class="ol-actions">
-        <button class="pv-icon-btn" title="Вище" ${i === 0 ? 'disabled' : ''} onclick="moveSection(${i},-1)">${ICONS.up}</button>
-        <button class="pv-icon-btn" title="Нижче" ${i === n - 1 ? 'disabled' : ''} onclick="moveSection(${i},1)">${ICONS.down}</button>
+        <button class="pv-icon-btn" title="Вище" ${first ? 'disabled' : ''} onclick="moveSection(${i},-1)">${ICONS.up}</button>
+        <button class="pv-icon-btn" title="Нижче" ${last ? 'disabled' : ''} onclick="moveSection(${i},1)">${ICONS.down}</button>
         <button class="pv-icon-btn" title="Додати підрозділ" onclick="addSubsection(${i})">${ICONS.plus}</button>
       </span>`}
     </div>
-    ${s.subsections.map((sub, j) => `
+    ${(s.subsections || []).map((sub, j) => `
     <a href="#sec-${i}-${j}" class="ol-link ol-sub" data-target="sec-${i}-${j}" data-sec="${i}" data-sub="${j}">
-      <span class="ol-num">${i + 1}.${j + 1}</span>
+      <span class="ol-num">${labels[i]}.${j + 1}</span>
       <span class="ol-title ${sub.title.trim() ? '' : 'untitled'}">${esc(sub.title.trim() || 'Без назви')}</span>
-    </a>`).join('')}`).join('');
+    </a>`).join('')}`;
+  };
+  const main = sections.map((s, i) => s.appendix ? '' : row(s, i)).join('');
+  const apps = sections.map((s, i) => s.appendix ? row(s, i) : '').join('');
+  nav.innerHTML = main + (apps ? `<p class="ol-group">Додатки</p>${apps}` : '');
 
   nav.querySelectorAll('.ol-link').forEach(a => a.onclick = e => {
     e.preventDefault();
@@ -1580,26 +1761,38 @@ function renderOutline() {
   });
 }
 
+// every section / subsection / point, in document order
+function allItems(list = sections, depth = 1) {
+  return list.flatMap(s => [s, ...(depth < 3 ? allItems(s.subsections || [], depth + 1) : [])]);
+}
+
 function updateReadiness() {
   const val = id => document.getElementById(id)?.value.trim();
-  const essay = reportKind === 'essay';
+  const essayLike = reportKind !== 'lab';
+  const course = reportKind === 'course';
   const school = reportLevel === 'school';
   const texTarget = id => editorMode === 'latex' ? 'tex-src' : id;
+  const meta = courseMeta;
   const checks = [
     ['Навчальний заклад', () => val('f-institution'), 'f-institution'],
-    [essay ? 'Тема' : 'Назва роботи', () => val('f-title'), 'f-title'],
+    [essayLike ? 'Тема' : 'Назва роботи', () => val('f-title'), 'f-title'],
     [school ? 'Предмет' : 'Дисципліна', () => val('f-discipline'), 'f-discipline'],
     [school ? 'Клас' : 'Група', () => val('f-group'), 'f-group'],
     [school ? 'Учень' : 'Студент', () => val('f-student'), 'f-student'],
-    [school ? 'Вчитель' : 'Викладач', () => val('f-teacher'), 'f-teacher'],
-    ...(essay ? [
+    [school ? 'Вчитель' : course ? 'Керівник' : 'Викладач', () => val('f-teacher'), 'f-teacher'],
+    ...(essayLike ? [
       ...(school ? [] : [['Факультет і кафедра', () => val('f-faculty') && val('f-department'), 'f-faculty']]),
       ['Вступ', () => val('f-intro'), texTarget('f-intro')],
     ] : [['Мета', () => val('f-goal'), texTarget('f-goal')]]),
-    ['Хоча б один розділ з текстом', () => sections.some(s => itemText(s) || s.subsections.some(itemText)), texTarget('btn-add-sec')],
-    ['Назви всіх розділів', () => sections.length && sections.every(s => s.title.trim() && s.subsections.every(b => b.title.trim())), texTarget('sections-container')],
+    ...(course && meta.task_sheet ? [
+      ['Завдання: спеціальність, курс, семестр', () => meta.specialty && meta.year_of_study && meta.semester, 'm-specialty'],
+      ['Завдання: терміни', () => meta.deadline && meta.issue_date, 'm-deadline'],
+      ['Календарний план', () => (meta.calendar || []).some(r => (r.stage || '').trim()), 'calendar-box'],
+    ] : []),
+    ['Хоча б один розділ з текстом', () => allItems(sections.filter(s => !s.appendix)).some(itemText), texTarget('btn-add-sec')],
+    ['Назви всіх розділів', () => sections.length && allItems().every(s => s.title.trim()), texTarget('sections-container')],
     ['Висновки',      () => val('ai-output'),    'ai-output'],
-    ...(essay ? [['Перелік посилань', () => refsList().length, texTarget('f-refs')]] : []),
+    ...(essayLike ? [['Перелік посилань', () => refsList().length, texTarget('f-refs')]] : []),
   ];
   const missing = checks.filter(([, ok]) => !ok());
   const done = checks.length - missing.length;
@@ -1618,8 +1811,102 @@ function updateReadiness() {
   });
 }
 
+/* ═════════ course work: task sheet and calendar plan (report.meta) ═════════ */
+let courseMeta = {};
+const COURSE_FIELDS = ['doc_code', 'specialty', 'year_of_study', 'semester', 'student_full_dative',
+                       'deadline', 'issue_date', 'input_data', 'contents', 'graphics', 'abbreviations'];
+const DEFAULT_CALENDAR = [
+  'Отримання завдання, вибір і узгодження теми', 'Аналіз предметної області та джерел',
+  'Основна частина: розробка, розрахунки, дослідження', 'Оформлення пояснювальної записки', 'Захист на комісії',
+].map(stage => ({ stage, deadline: '', note: '', sub: false }));
+
+function fillCourseCard() {
+  COURSE_FIELDS.forEach(k => {
+    const el = document.getElementById(`m-${k}`);
+    if (el) { el.value = courseMeta[k] || ''; autoGrow(el); }
+  });
+  const task = document.getElementById('m-task_sheet');
+  if (task) task.checked = Boolean(courseMeta.task_sheet);
+  document.getElementById('task-fields')?.classList.toggle('hidden', !courseMeta.task_sheet);
+  document.querySelectorAll('#course-type-seg [data-ct]').forEach(b =>
+    b.classList.toggle('on', b.dataset.ct === (courseMeta.course_type || 'project')));
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const box = document.getElementById('calendar-box');
+  if (!box) return;
+  const rows = courseMeta.calendar || [];
+  let n = 0;
+  box.innerHTML = rows.length ? `
+    <div class="cal-head"><span>№</span><span>Етап</span><span>Строк</span><span>Примітка</span><span></span></div>
+    ${rows.map((r, i) => `
+    <div class="cal-row ${r.sub ? 'sub' : ''}" data-cal="${i}">
+      <span class="cal-no">${r.sub ? '' : ++n}</span>
+      <input data-calf="stage" value="${esc(r.stage || '')}" placeholder="${r.sub ? 'Підетап' : 'Назва етапу'}">
+      <input data-calf="deadline" value="${esc(r.deadline || '')}" placeholder="09.10.2025">
+      <input data-calf="note" value="${esc(r.note || '')}" placeholder="Виконано">
+      <span class="cal-tools">
+        <button type="button" class="pv-icon-btn" data-calact="sub" title="${r.sub ? 'Зробити етапом' : 'Зробити підетапом (а, б, в)'}">${r.sub ? ICONS.left : ICONS.right}</button>
+        <button type="button" class="pv-icon-btn" data-calact="up" title="Вище" ${i === 0 ? 'disabled' : ''}>${ICONS.up}</button>
+        <button type="button" class="pv-icon-btn danger" data-calact="del" title="Видалити">${ICONS.trash}</button>
+      </span>
+    </div>`).join('')}` : '<p class="text-sm text-muted">Етапів ще немає.</p>';
+}
+
+function bindCourseCard() {
+  const card = document.getElementById('course-card');
+  if (!card) return;
+  card.addEventListener('input', e => {
+    const key = e.target.id?.startsWith('m-') ? e.target.id.slice(2) : null;
+    if (key && COURSE_FIELDS.includes(key)) { courseMeta[key] = e.target.value; updateReadiness(); refreshLive(); return; }
+    const row = e.target.closest('[data-cal]');
+    if (row && e.target.dataset.calf) {
+      courseMeta.calendar[Number(row.dataset.cal)][e.target.dataset.calf] = e.target.value;
+      updateReadiness();
+      refreshLive();
+    }
+  });
+  card.addEventListener('change', e => {
+    if (e.target.id === 'm-task_sheet') {
+      courseMeta.task_sheet = e.target.checked;
+      if (courseMeta.task_sheet && !(courseMeta.calendar || []).length) courseMeta.calendar = DEFAULT_CALENDAR.map(r => ({ ...r }));
+      fillCourseCard();
+      updateReadiness();
+      refreshLive();
+    }
+  });
+  card.addEventListener('click', e => {
+    const ct = e.target.closest('[data-ct]')?.dataset.ct;
+    if (ct) { courseMeta.course_type = ct; fillCourseCard(); refreshLive(); return; }
+    const add = e.target.closest('[data-caladd]')?.dataset.caladd;
+    if (add) {
+      courseMeta.calendar = courseMeta.calendar || [];
+      if (add === 'defaults') {
+        if (courseMeta.calendar.some(r => r.stage) && !confirm('Замінити поточний план типовими етапами?')) return;
+        courseMeta.calendar = DEFAULT_CALENDAR.map(r => ({ ...r }));
+      } else {
+        courseMeta.calendar.push({ stage: '', deadline: '', note: '', sub: add === 'sub' });
+      }
+      renderCalendar();
+      document.querySelector(`#calendar-box [data-cal="${courseMeta.calendar.length - 1}"] input`)?.focus();
+      refreshLive();
+      return;
+    }
+    const act = e.target.closest('[data-calact]');
+    if (!act) return;
+    const i = Number(act.closest('[data-cal]').dataset.cal);
+    const rows = courseMeta.calendar;
+    if (act.dataset.calact === 'del') rows.splice(i, 1);
+    if (act.dataset.calact === 'up' && i > 0) [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]];
+    if (act.dataset.calact === 'sub') rows[i].sub = !rows[i].sub;
+    renderCalendar();
+    refreshLive();
+  });
+}
+
 /* ── file upload ── */
-function triggerUpload(path) { document.getElementById(`fu-${String(path).replace('.', '-')}`)?.click(); }
+function triggerUpload(path) { document.getElementById(`fu-${String(path).replaceAll('.', '-')}`)?.click(); }
 
 async function handleDrop(e, i) {
   e.preventDefault();
@@ -1655,7 +1942,7 @@ async function uploadImages(id, files, sectionPath) {
 
 async function uploadFiles(files, sectionPath) {
   if (!reportId) { toast('Спершу збережіть звіт — тоді можна додавати скріншоти', 'err'); return; }
-  const zone = document.querySelector(`#imgs-${String(sectionPath).replace('.', '-')}`)?.previousElementSibling?.previousElementSibling;
+  const zone = document.querySelector(`#imgs-${String(sectionPath).replaceAll('.', '-')}`)?.previousElementSibling?.previousElementSibling;
   zone?.classList.add('busy');
   const created = await uploadImages(reportId, files, sectionPath);
   zone?.classList.remove('busy');
@@ -1666,7 +1953,7 @@ async function uploadFiles(files, sectionPath) {
 
 // Figures of one section as cards: preview, caption, order, delete
 function renderImageGrid(path) {
-  const grid = document.getElementById(`imgs-${String(path).replace('.', '-')}`);
+  const grid = document.getElementById(`imgs-${String(path).replaceAll('.', '-')}`);
   if (!grid) return;
   const list = imagesIn(reportImages, path);
   grid.innerHTML = list.map((img, k) => `
@@ -1885,6 +2172,7 @@ async function parseTex() {
 
 function applyParsed(r) {
   sections = toEditableSections(r.sections);
+  if (r.abbreviations !== undefined) courseMeta.abbreviations = r.abbreviations;
   const set = (id, value) => {
     const el = document.getElementById(id);
     if (el && document.activeElement !== el) { el.value = value || ''; autoGrow(el); }
@@ -1979,6 +2267,7 @@ function titlePayload() {
     faculty:          v('f-faculty'),
     department:       v('f-department'),
     work_date:        v('f-date'),
+    meta:             courseMeta,
   };
 }
 
@@ -2196,8 +2485,10 @@ function tourSteps() {
                   : 'Одне-два речення про те, що досліджуєте. Мета потрапить у документ і допоможе ШІ з висновками.' },
     { target: () => visible('#sections-container .section-item') || visible('#btn-add-sec'), title: 'Розділи',
       body: 'Кожен розділ — це заголовок і вміст. Нумерація «1», «1.1» ставиться сама. Додавати розділи можна й з панелі праворуч.' },
-    { target: () => visible('#sections-container .add-bar'), title: 'Текст, код, формула — у будь-якому порядку',
-      body: 'Додавайте блоки скільки треба: текст → код → знову текст. Стрілки ↑ ↓ на блоці змінюють порядок.',
+    { target: () => visible('#course-card'), title: 'Завдання і календарний план',
+      body: 'Для курсової: проєкт чи робота, позначення документа, а галочкою — сторінки «Завдання» і «Календарний план» одразу після титулки. Етапи плану з підетапами а), б).' },
+    { target: () => visible('#sections-container .add-bar'), title: 'Текст, код, формула, таблиця — у будь-якому порядку',
+      body: 'Додавайте блоки скільки треба: текст → код → знову текст. Таблицю можна вставити з Excel. Стрілки ↑ ↓ на блоці змінюють порядок; пункти 1.1.1 — кнопкою в підрозділі.',
       demo: TOUR_DEMO.blocks },
     { target: () => visible('#sections-container .blk-formula') || visible('#sections-container [data-add="formula"]'),
       title: 'Формули',
@@ -2205,6 +2496,8 @@ function tourSteps() {
       demo: TOUR_DEMO.formula },
     { target: () => visible('#sections-container .upload-zone'), title: 'Рисунки',
       body: 'Перетягніть скріншоти — вони стануть «Рисунок 1 – …». Підпис і порядок змінюються на картці, клік відкриває перегляд.' },
+    { target: () => visible('#appendix-card .panel-head'), title: 'Додатки',
+      body: 'Код програми, великі таблиці, креслення — у додатки: ДОДАТОК А, Б, … кожен з нової сторінки, з нумерацією А.1 всередині.' },
     { target: '#mode-seg', title: latex ? 'Ви в режимі LaTeX' : 'Форма або LaTeX',
       body: latex ? 'Увесь вміст тут — код LaTeX. Він зберігається сам, а документ збирається з нього так само, як із форми.'
                   : 'Якщо вам зручніше LaTeX — перемкніться: увесь вміст стане кодом. Кнопка «.tex» угорі дасть архів для Overleaf.' },
@@ -2480,39 +2773,108 @@ const mathParas = text => {
   const lines = docLines(text);
   return lines.length ? lines.map(l => `<p>${inlineHtml(l)}</p>`).join('') : '<p><br></p>';
 };
-const blockValueField = b => b.type === 'text' ? 'text' : b.type === 'code' ? 'code' : 'latex';
+const blockValueField = b => b.type === 'text' ? 'text' : b.type === 'code' ? 'code' : b.type === 'table' ? 'caption' : 'latex';
+
+// Mirror of backend course_pages.course_words
+const courseWords = meta => meta?.course_type === 'work'
+  ? { title: 'КУРСОВА РОБОТА', task_title: 'НА КУРСОВУ РОБОТУ', genitive: 'курсової роботи', noun: 'роботи', finished: 'закінченої роботи', topic_hint: '(тема роботи)' }
+  : { title: 'КУРСОВИЙ ПРОЄКТ', task_title: 'НА КУРСОВИЙ ПРОЄКТ', genitive: 'курсового проєкту', noun: 'проєкту', finished: 'закінченого проєкту', topic_hint: '(тема проєкту)' };
+
+const SUB_LETTERS = 'абвгдежиклмнпрстуфхцшщюя';
+function calendarRows(meta) {
+  let n = 0, sub = 0;
+  return (meta?.calendar || []).filter(r => (r.stage || '').trim()).map(r => {
+    if (r.sub) {
+      const stage = /^\S{1,2}\)/.test(r.stage.trim()) ? r.stage.trim() : `${SUB_LETTERS[sub++ % SUB_LETTERS.length]}) ${r.stage.trim()}`;
+      return { no: '', stage, deadline: r.deadline || '', note: r.note || '' };
+    }
+    sub = 0;
+    return { no: String(++n), stage: r.stage.trim(), deadline: r.deadline || '', note: r.note || '' };
+  });
+}
+
+/* ЗАВДАННЯ and КАЛЕНДАРНИЙ ПЛАН of a course work (read-only here; edited in the form) */
+function taskSheetsHtml(doc) {
+  const m = doc.meta || {};
+  const w = courseWords(m);
+  const v = x => esc(String(x || ''));
+  const line = (label, value) => `<div class="dv-field"><span class="lbl">${esc(label)}</span><span class="u">${v(value)}</span></div>`;
+  const long = (label, value) => `<p class="dv-long">${esc(label)} <u>&nbsp;${v(value)}&nbsp;</u></p>`;
+  const student = docLines(doc.student_name)[0] || '';
+  const supervisors = docLines(doc.teacher);
+  const fields = [
+    [`Тема ${w.noun}:`, doc.title], [`Термін здачі студентом ${w.finished}:`, m.deadline], [`Вхідні дані до ${w.noun}:`, m.input_data],
+    ['Зміст розрахунково-пояснювальної записки (перелік питань, які підлягають розробці):', m.contents],
+    ['Перелік графічного матеріалу (з точним визначенням обов’язкових креслень):', m.graphics],
+    ['Дата видачі завдання:', m.issue_date],
+  ];
+  const rows = calendarRows(m).map(r => `<tr><td>${esc(r.no)}</td><td>${esc(r.stage)}</td><td>${esc(r.deadline)}</td><td>${esc(r.note)}</td></tr>`).join('');
+  const sign = [['Студент:', student, '(прізвище, ініціали)'], ...supervisors.map(s => ['Керівник роботи:', s, '(посада, прізвище, ініціали)'])]
+    .map(([l, n, h]) => `<tr><td>${esc(l)}</td><td>______________</td><td>${esc(n)}</td></tr><tr class="h"><td></td><td>(підпис)</td><td>${h}</td></tr>`).join('');
+  return `
+      <section class="dv-sheet dv-task" id="dv-task">
+        <p class="c">${esc((doc.institution || '').toUpperCase())}</p>
+        ${line('Факультет:', doc.faculty)}${line('Кафедра:', doc.department)}${line('Спеціальність:', m.specialty)}
+        <p class="dv-plain">Курс <u>&nbsp;${v(m.year_of_study)}&nbsp;</u> група <u>&nbsp;${v(doc.group)}&nbsp;</u> семестр <u>&nbsp;${v(m.semester)}&nbsp;</u></p>
+        <p>&nbsp;</p>
+        <p class="c b">ЗАВДАННЯ</p><p class="c b">${w.task_title}</p>
+        ${line(doc.student_gender === 'f' ? 'Студентці' : 'Студентові', m.student_full_dative || student)}
+        <p class="dv-hint">(прізвище, ім’я, по батькові)</p>
+        ${fields.map(([l, x], k) => long(`${k + 1}. ${l}`, x)).join('')}
+        ${editable_note()}
+      </section>
+      <section class="dv-sheet dv-task" id="dv-plan">
+        <p class="c b">КАЛЕНДАРНИЙ ПЛАН</p><p>&nbsp;</p>
+        <table class="dv-grid"><thead><tr><th>№</th><th>Назви етапів ${w.genitive}</th><th>Строк виконання етапів роботи</th><th>Примітка</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="4" class="muted">Етапи додаються у формі «Курсова: завдання і план»</td></tr>'}</tbody></table>
+        <p>&nbsp;</p>${line('Дата видачі завдання:', m.issue_date)}
+        <table class="dv-sign-tbl">${sign}</table>
+      </section>`;
+}
+const editable_note = () => '<p class="dv-note">Завдання й календарний план заповнюються у формі редактора (картка «Курсова: завдання і план»).</p>';
 
 function buildDocSheets(doc, images, { editable = false } = {}) {
-  const essay = doc.kind === 'essay';
-  const editAttr = (bind, ph, kind = 'line') => editable
-    ? `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}" contenteditable="${kind === 'paras' ? 'true' : PLAIN_EDIT}" spellcheck="true"`
-    : `data-bind="${bind}" data-kind="${kind}" data-ph="${esc(ph)}"`;
+  const kind = doc.kind || 'lab';
+  const essayLike = kind !== 'lab';
+  const course = kind === 'course';
+  const meta = doc.meta || {};
+  const editAttr = (bind, ph, k = 'line') => editable
+    ? `data-bind="${bind}" data-kind="${k}" data-ph="${esc(ph)}" contenteditable="${k === 'paras' ? 'true' : PLAIN_EDIT}" spellcheck="true"`
+    : `data-bind="${bind}" data-kind="${k}" data-ph="${esc(ph)}"`;
   const textBlock = (bind, ph, text) =>
     `<div class="dv-text ${hasInlineMath(text) ? 'has-math' : ''}" ${editAttr(bind, ph, 'paras')}>${mathParas(text)}</div>`;
-  const pagebreak = essay ? '<div class="dv-pagebreak" aria-hidden="true"><span>нова сторінка</span></div>' : '';
+  const pagebreak = essayLike ? '<div class="dv-pagebreak" aria-hidden="true"><span>нова сторінка</span></div>' : '';
   const titlePage = titlePageHtml(doc, editAttr, editable);
+  const labels = sectionLabels(doc.sections);
 
-  // Numbering as in report_outline.py: formulas always (section.n); listings / figures
-  // through the document in a lab report, within the section in an essay
-  let listing = 0, figure = 0, sectionListing = 0, sectionFigure = 0, formula = 0;
-  const blockHtml = (item, i, j) => {
-    const path = j === undefined ? `${i}` : `${i}.${j}`;
-    const num = j === undefined ? `${i + 1}` : `${i + 1}.${j + 1}`;
-    const title = item.title.trim() || (j === undefined ? `Розділ ${num}` : `Підрозділ ${num}`);
-    const tag = j === undefined ? 'h1' : 'h2';
-    if (j === undefined) { sectionListing = 0; sectionFigure = 0; formula = 0; }
+  // Numbering as in report_outline.py: formulas always (section.n); listings, figures, tables
+  // through the document in a lab report, within the section otherwise and in appendices
+  const global = { listing: 0, figure: 0, table: 0 };
+  const toc = [];
+
+  const itemHtml = (item, path, depth, label, ctx) => {
+    const isApp = depth === 1 && item.appendix;
+    const tag = `h${depth}`;
+    const place = depth === 1 ? (isApp ? 'Назва додатка' : 'Назва розділу') : depth === 2 ? 'Назва підрозділу' : 'Назва пункту';
+    const title = item.title.trim() || (depth === 1 ? (isApp ? '' : `Розділ ${label}`) : `${depth === 2 ? 'Підрозділ' : 'Пункт'} ${label}`);
+    const no = k => ctx.local ? `${ctx.sec}.${++ctx.c[k]}` : String(++global[k]);
+    toc.push([isApp ? `ДОДАТОК ${label} ${item.title.trim()}` : `${label} ${depth === 1 ? title.toUpperCase() : title}`, Math.min(depth, 3), path, label, isApp]);
+
     let html = `
-        ${j === undefined ? pagebreak : ''}
-        <div class="dv-block" id="dv-${path.replace('.', '-')}" data-path="${path}">
+        ${depth === 1 ? pagebreak : ''}
+        <div class="dv-block depth-${depth}" id="dv-${path.replaceAll('.', '-')}" data-path="${path}">
           ${editable ? `<div class="dv-hover">
-            ${j === undefined ? `<button data-act="sub" data-path="${path}" title="Додати підрозділ">${ICONS.plus} Підрозділ</button>` : ''}
+            ${depth < 3 ? `<button data-act="sub" data-path="${path}" title="Додати ${depth === 1 ? 'підрозділ' : 'пункт'}">${ICONS.plus} ${depth === 1 ? 'Підрозділ' : 'Пункт'}</button>` : ''}
             <button data-act="addtext" data-path="${path}" title="Додати абзац тексту">${ICONS.text} Текст</button>
             <button data-act="addcode" data-path="${path}" title="Додати лістинг коду">${ICONS.code} Код</button>
             <button data-act="addformula" data-path="${path}" title="Додати формулу">${ICONS.sigma} Формула</button>
+            <button data-act="addtable" data-path="${path}" title="Додати таблицю">${ICONS.table} Таблиця</button>
             <button data-act="img" data-path="${path}" title="Додати рисунок">${ICONS.image} Рисунок</button>
             <button data-act="del" data-path="${path}" class="danger" title="Видалити">${ICONS.trash}</button>
           </div>` : ''}
-          <${tag} class="dv-h"><span class="dv-num">${num}</span> <span ${editAttr(`sec|${path}`, j === undefined ? 'Назва розділу' : 'Назва підрозділу')}>${esc(item.title)}</span></${tag}>`;
+          ${isApp
+            ? `<h1 class="dv-h dv-app"><span class="dv-num">Додаток ${label}</span><span class="dv-app-title" ${editAttr(`sec|${path}`, place)}>${esc(item.title)}</span></h1>`
+            : `<${tag} class="dv-h"><span class="dv-num">${label}</span> <span ${editAttr(`sec|${path}`, place)}>${esc(item.title)}</span></${tag}>`}`;
 
     item.blocks.forEach((b, k) => {
       const bind = `blk|${path}|${k}`;
@@ -2521,14 +2883,20 @@ function buildDocSheets(doc, images, { editable = false } = {}) {
       if (b.type === 'text') {
         html += `<div class="dv-blk">${del}${textBlock(bind, 'Текст — що зроблено, які результати', b.text)}</div>`;
       } else if (b.type === 'code') {
-        listing++; sectionListing++;
-        const no = essay ? `${i + 1}.${sectionListing}` : listing;
-        html += `<div class="dv-blk">${del}<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${no} – ${esc(title)}</p>
+        html += `<div class="dv-blk">${del}<p class="dv-cap-left" data-cap-of="${path}">Лістинг ${no('listing')} – ${esc(title)}</p>
           <pre class="dv-code" ${editAttr(bind, 'Код', 'code')}>${esc((b.code || '').replace(/\r/g, ''))}</pre></div>`;
+      } else if (b.type === 'table') {
+        const rows = b.rows?.length ? b.rows : [['']];
+        const head = b.header ?? 1;
+        html += `<div class="dv-blk dv-table">${del}
+          <p class="dv-cap-left">Таблиця ${no('table')} – <span ${editAttr(bind, 'назва таблиці')}>${esc(b.caption || '')}</span></p>
+          <table class="dv-grid">${rows.map((row, r) => `<tr>${row.map((c, ci) => {
+            const t = r < head ? 'th' : 'td';
+            return `<${t} ${editAttr(`tbl|${path}|${k}|${r}|${ci}`, '')}>${editable ? esc(c) : inlineHtml(c)}</${t}>`;
+          }).join('')}</tr>`).join('')}</table></div>`;
       } else {
-        formula++;
         html += `<div class="dv-blk dv-formula">${del}
-          <div class="dv-f-row"><span></span><span class="dv-f-math">${mathHtml(b.latex, true) || (editable ? '<span class="dv-f-empty">формула</span>' : '')}</span><span class="dv-f-no">(${i + 1}.${formula})</span></div>
+          <div class="dv-f-row"><span></span><span class="dv-f-math">${mathHtml(b.latex, true) || (editable ? '<span class="dv-f-empty">формула</span>' : '')}</span><span class="dv-f-no">(${ctx.sec}.${++ctx.c.formula})</span></div>
           ${editable ? `<code class="dv-f-src" ${editAttr(bind, 'LaTeX формули, напр. \\frac{a}{b}')}>${esc(b.latex)}</code>` : ''}
         </div>`;
       }
@@ -2536,13 +2904,11 @@ function buildDocSheets(doc, images, { editable = false } = {}) {
 
     const figs = imagesIn(images, path);
     figs.forEach((img, k) => {
-      figure++; sectionFigure++;
-      const no = essay ? `${i + 1}.${sectionFigure}` : figure;
       html += `<figure class="dv-fig" data-img="${img.id}">
           ${img.available === false
             ? `<div class="dv-fig-lost">Файл рисунка втрачено на сервері — видаліть його і завантажте ще раз</div>`
             : `<img src="${API_URL}${img.url}" alt="" ${editable ? `data-act="viewimg" data-img="${img.id}" title="Переглянути"` : ''}>`}
-          <figcaption>Рисунок ${no} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
+          <figcaption>Рисунок ${no('figure')} – <span ${editAttr(`img|${img.id}`, 'підпис рисунка')}>${esc(img.caption)}</span></figcaption>
           ${editable ? `<div class="dv-fig-tools">
             <button data-act="imgup" data-img="${img.id}" title="Раніше" ${k === 0 ? 'disabled' : ''}>${ICONS.up}</button>
             <button data-act="imgdown" data-img="${img.id}" title="Пізніше" ${k === figs.length - 1 ? 'disabled' : ''}>${ICONS.down}</button>
@@ -2550,40 +2916,56 @@ function buildDocSheets(doc, images, { editable = false } = {}) {
           </div>` : ''}
         </figure>`;
     });
-    return html + '</div>';
+    html += '</div>';
+    if (depth < 3) (item.subsections || []).forEach((sub, k) => { html += itemHtml(sub, `${path}.${k}`, depth + 1, `${label}.${k + 1}`, ctx); });
+    return html;
+  };
+
+  const sectionHtml = (s, i) => {
+    const local = essayLike || s.appendix;
+    const ctx = { sec: labels[i], local, c: { listing: 0, figure: 0, table: 0, formula: 0 } };
+    return itemHtml(s, String(i), 1, labels[i], ctx);
   };
 
   const refs = doc.bibliography || [];
-  const showRefs = essay || refs.length > 0;
-  const front = essay
-    ? { title: 'Вступ', bind: 'doc|introduction', ph: 'Вступ: актуальність теми, мета реферату', text: doc.introduction }
+  const showRefs = essayLike || refs.length > 0;
+  const refsTitle = course ? 'Перелік джерел посилання' : 'Перелік посилань';
+  const abbreviations = essayLike && docLines(meta.abbreviations).length;
+  const front = essayLike
+    ? { title: 'Вступ', bind: 'doc|introduction', ph: course ? 'Вступ: актуальність, мета, задачі, об’єкт і предмет' : 'Вступ: актуальність теми, мета реферату', text: doc.introduction }
     : { title: 'Мета роботи', bind: 'doc|goal', ph: 'Мета роботи', text: doc.goal };
 
-  const toc = [[front.title.toUpperCase(), 1]];
-  doc.sections.forEach((s, i) => {
-    toc.push([`${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`, 1]);
-    s.subsections.forEach((b, j) => toc.push([`${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`, 2]));
-  });
-  toc.push(['ВИСНОВКИ', 1]);
-  if (showRefs) toc.push(['ПЕРЕЛІК ПОСИЛАНЬ', 1]);
+  const main = doc.sections.map((s, i) => s.appendix ? '' : sectionHtml(s, i)).join('');
+  const mainToc = toc.splice(0);
+  const apps = doc.sections.map((s, i) => s.appendix ? sectionHtml(s, i) : '').join('');
+  const appToc = toc.splice(0);
+  const tocRows = [
+    ...(abbreviations ? [['СКОРОЧЕННЯ ТА УМОВНІ ПОЗНАКИ', 1]] : []),
+    [front.title.toUpperCase(), 1], ...mainToc, ['ВИСНОВКИ', 1],
+    ...(showRefs ? [[refsTitle.toUpperCase(), 1]] : []), ...appToc,
+  ];
 
-  return titlePage + `
+  return titlePage
+    + (course && meta.task_sheet ? taskSheetsHtml(doc) : '') + `
       <section class="dv-sheet dv-toc">
         <p class="dv-toc-title">ЗМІСТ</p>
-        ${toc.map(([t, l]) => `<p class="dv-toc-row l${l}"><span>${esc(t)}</span><i></i></p>`).join('')}
+        ${tocRows.map(([t, l, path, num, isApp]) => `<p class="dv-toc-row l${l}"><span ${path !== undefined ? `data-toc-path="${path}" data-num="${num}" data-app="${isApp ? 1 : ''}"` : ''}>${esc(t)}</span><i></i></p>`).join('')}
         <p class="dv-note">Зміст складається автоматично; номери сторінок з'являться в документі (вкладка PDF).</p>
       </section>
-      <section class="dv-sheet dv-body ${essay ? 'is-essay' : ''}">
+      <section class="dv-sheet dv-body ${essayLike ? 'is-essay' : ''} ${course ? 'is-course' : ''}">
+        ${abbreviations ? `<h1 class="dv-h">Скорочення та умовні познаки</h1>${textBlock('meta|abbreviations', 'Термін – пояснення', meta.abbreviations)}${pagebreak}` : ''}
         <h1 class="dv-h">${front.title}</h1>
         ${textBlock(front.bind, front.ph, front.text)}
-        ${doc.sections.map((s, i) => blockHtml(s, i) + s.subsections.map((b, j) => blockHtml(b, i, j)).join('')).join('')}
-        ${editable ? `<button class="dv-add" data-act="section">${ICONS.plus} Додати розділ ${doc.sections.length + 1}</button>` : '<div class="dv-add-gap"></div>'}
+        ${main}
+        ${editable ? `<button class="dv-add" data-act="section">${ICONS.plus} Додати розділ</button>` : '<div class="dv-add-gap"></div>'}
         ${pagebreak}
         <h1 class="dv-h" id="dv-conclusion">Висновки</h1>
         ${textBlock('doc|conclusion', 'Висновки (можна згенерувати в редакторі)', doc.conclusion)}
         ${showRefs ? `${pagebreak}
-        <h1 class="dv-h" id="dv-refs">Перелік посилань</h1>
+        <h1 class="dv-h" id="dv-refs">${refsTitle}</h1>
         <div class="dv-text dv-refs" ${editAttr('doc|bibliography', 'Джерела — кожне з нового рядка', 'paras')}>${mathParas(refs.join('\n'))}</div>` : ''}
+        ${apps}
+        ${editable ? `<button class="dv-add" data-act="appendix">${ICONS.plus} Додати додаток</button>` : ''}
       </section>`;
 }
 
@@ -2680,7 +3062,7 @@ async function openPreview(id, title, opts = {}) {
         faculty: doc.faculty, department: doc.department,
         ministry: doc.ministry, institution: doc.institution, city: doc.city,
         goal: doc.goal, introduction: doc.introduction, conclusion: doc.conclusion,
-        bibliography: doc.bibliography, sections: sectionsPayload(doc.sections),
+        bibliography: doc.bibliography, sections: sectionsPayload(doc.sections), meta: doc.meta || {},
       });
       for (const imgId of captions) {
         const img = images.find(i => i.id === imgId);
@@ -2816,11 +3198,19 @@ async function openPreview(id, title, opts = {}) {
   /* ═════════ editable document ═════════ */
   const pages = $('.dv-pages');
   const itemAt = path => {
-    const [i, j] = String(path).split('.').map(Number);
-    return j === undefined ? doc.sections[i] : doc.sections[i].subsections[j];
+    const idx = String(path).split('.').map(Number);
+    let item = doc.sections[idx[0]];
+    for (const k of idx.slice(1)) item = item?.subsections?.[k];
+    return item;
+  };
+  const listOf = path => {
+    const idx = String(path).split('.').map(Number);
+    return { list: idx.length === 1 ? doc.sections : itemAt(idx.slice(0, -1).join('.')).subsections, index: idx[idx.length - 1] };
   };
   const getField = bind => {
-    const [k, a, b] = bind.split('|');
+    const [k, a, b, r, c] = bind.split('|');
+    if (k === 'meta') return doc.meta?.[a] || '';
+    if (k === 'tbl') return itemAt(a)?.blocks[+b]?.rows?.[+r]?.[+c] ?? '';
     if (k === 'doc') return a === 'bibliography' ? doc.bibliography.join('\n') : doc[a];
     if (k === 'img') return images.find(i => i.id === Number(a))?.caption ?? '';
     if (k === 'sec') return itemAt(a)?.title;
@@ -2828,7 +3218,9 @@ async function openPreview(id, title, opts = {}) {
     return blk ? blk[blockValueField(blk)] : '';
   };
   const setField = (bind, value) => {
-    const [k, a, b] = bind.split('|');
+    const [k, a, b, r, c] = bind.split('|');
+    if (k === 'meta') { doc.meta = { ...(doc.meta || {}), [a]: value }; return; }
+    if (k === 'tbl') { const row = itemAt(a)?.blocks[+b]?.rows?.[+r]; if (row) row[+c] = value; return; }
     if (k === 'doc') { doc[a] = a === 'bibliography' ? docLines(value) : value; return; }
     if (k === 'img') { const img = images.find(i => i.id === Number(a)); if (img) { img.caption = value; dirtyCaptions.add(img.id); } return; }
     if (k === 'sec') { itemAt(a).title = value; return; }
@@ -2850,32 +3242,37 @@ async function openPreview(id, title, opts = {}) {
 
   // Only titles affect other places (TOC, outline, listing captions) — refresh those without re-rendering the page
   function refreshDerived() {
-    const tocRows = pages.querySelectorAll('.dv-toc-row span');
-    let r = 1;     // row 0 is МЕТА РОБОТИ / ВСТУП
-    doc.sections.forEach((s, i) => {
-      tocRows[r++].textContent = `${i + 1} ${(s.title.trim() || `Розділ ${i + 1}`).toUpperCase()}`;
-      s.subsections.forEach((b, j) => { tocRows[r++].textContent = `${i + 1}.${j + 1} ${b.title.trim() || `Підрозділ ${i + 1}.${j + 1}`}`; });
+    pages.querySelectorAll('[data-toc-path]').forEach(span => {
+      const item = itemAt(span.dataset.tocPath);
+      if (!item) return;
+      const depth = span.dataset.tocPath.split('.').length;
+      const num = span.dataset.num;
+      span.textContent = span.dataset.app ? `ДОДАТОК ${num} ${item.title.trim()}`
+        : `${num} ${depth === 1 ? (item.title.trim() || `Розділ ${num}`).toUpperCase() : (item.title.trim() || num)}`;
     });
     pages.querySelectorAll('[data-cap-of]').forEach(p => {
-      const [i, j] = p.dataset.capOf.split('.').map(Number);
-      const b = j === undefined ? doc.sections[i] : doc.sections[i].subsections[j];
-      const title = b.title.trim() || (j === undefined ? `Розділ ${i + 1}` : `Підрозділ ${i + 1}.${j + 1}`);
-      p.textContent = p.textContent.replace(/ – .*$/, ` – ${title}`);
+      const item = itemAt(p.dataset.capOf);
+      if (item) p.textContent = p.textContent.replace(/ – .*$/, ` – ${item.title.trim() || 'Без назви'}`);
     });
     renderOutlineNav();
   }
 
   function renderOutlineNav() {
     const nav = $('.pv-outline');
+    const labels = sectionLabels(doc.sections);
     const item = (label, target, cls = '') =>
       `<button class="pvo-item ${cls}" data-target="${target}"><span>${esc(label)}</span></button>`;
+    const sectionItems = app => doc.sections.map((s, i) => Boolean(s.appendix) !== app ? ''
+      : item(`${app ? 'Додаток ' : ''}${labels[i]} ${s.title.trim() || 'Без назви'}`, `#dv-${i}`)
+        + (s.subsections || []).map((b, j) => item(`${labels[i]}.${j + 1} ${b.title.trim() || 'Без назви'}`, `#dv-${i}-${j}`, 'sub')).join('')).join('');
     nav.innerHTML = `<p class="pvo-head">Зміст</p>`
       + item('Титульна сторінка', '.dv-title')
-      + item(doc.kind === 'essay' ? 'Вступ' : 'Мета роботи', '.dv-body')
-      + doc.sections.map((s, i) => item(`${i + 1} ${s.title.trim() || 'Без назви'}`, `#dv-${i}`)
-          + s.subsections.map((b, j) => item(`${i + 1}.${j + 1} ${b.title.trim() || 'Без назви'}`, `#dv-${i}-${j}`, 'sub')).join('')).join('')
+      + (pages.querySelector('#dv-task') ? item('Завдання', '#dv-task') + item('Календарний план', '#dv-plan') : '')
+      + item(doc.kind === 'lab' ? 'Мета роботи' : 'Вступ', '.dv-body')
+      + sectionItems(false)
       + item('Висновки', '#dv-conclusion')
-      + (pages.querySelector('#dv-refs') ? item('Перелік посилань', '#dv-refs') : '')
+      + (pages.querySelector('#dv-refs') ? item(doc.kind === 'course' ? 'Перелік джерел' : 'Перелік посилань', '#dv-refs') : '')
+      + sectionItems(true)
       + (editable ? `<button class="btn btn-secondary btn-sm pvo-add" data-act="section">${ICONS.plus} Розділ</button>` : '');
     nav.querySelectorAll('.pvo-item').forEach(b => b.onclick = () =>
       pages.querySelector(b.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -2952,22 +3349,23 @@ async function openPreview(id, title, opts = {}) {
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
     const act = btn.dataset.act;
-    const [i, j] = (btn.dataset.path || '').split('.').map(Number);
-    const block = btn.dataset.path ? itemAt(btn.dataset.path) : null;
-    const isSub = j !== undefined && !Number.isNaN(j);
+    const path = btn.dataset.path || '';
+    const block = path ? itemAt(path) : null;
 
-    if (act === 'section') {
-      doc.sections.push(newItem(true));
+    if (act === 'section' || act === 'appendix') {
+      doc.sections.push({ ...newItem(true), ...(act === 'appendix' ? { appendix: true } : {}) });
       touch(); render();
       focusBind(`sec|${doc.sections.length - 1}`);
     } else if (act === 'sub') {
-      doc.sections[i].subsections.push(newItem(false));
+      const depth = path.split('.').length;
+      block.subsections = block.subsections || [];
+      block.subsections.push(newItem(depth < 2));
       touch(); render();
-      focusBind(`sec|${i}.${doc.sections[i].subsections.length - 1}`);
-    } else if (act === 'addtext' || act === 'addcode' || act === 'addformula') {
-      block.blocks.push({ addtext: newTextBlock, addcode: newCodeBlock, addformula: newFormulaBlock }[act]());
+      focusBind(`sec|${path}.${block.subsections.length - 1}`);
+    } else if (act === 'addtext' || act === 'addcode' || act === 'addformula' || act === 'addtable') {
+      block.blocks.push({ addtext: newTextBlock, addcode: newCodeBlock, addformula: newFormulaBlock, addtable: newTableBlock }[act]());
       touch(); render();
-      focusBind(`blk|${btn.dataset.path}|${block.blocks.length - 1}`);
+      focusBind(act === 'addtable' ? `tbl|${path}|${block.blocks.length - 1}|0|0` : `blk|${path}|${block.blocks.length - 1}`);
     } else if (act === 'blkdel') {
       const k = Number(btn.dataset.k);
       if (blockFilled(block.blocks[k]) && !confirm('Видалити цей блок?')) return;
@@ -2975,10 +3373,10 @@ async function openPreview(id, title, opts = {}) {
       if (!block.blocks.length) block.blocks.push(newTextBlock());
       touch(); render();
     } else if (act === 'del') {
-      const label = isSub ? `підрозділ ${i + 1}.${j + 1}` : `розділ ${i + 1}`;
-      if (hasContent(block) && !confirm(`Видалити ${label} разом із вмістом і рисунками?`)) return;
-      if (isSub) doc.sections[i].subsections.splice(j, 1); else doc.sections.splice(i, 1);
-      images = await remapImages(id, images, isSub ? pathMaps.removeSubsection(i, j) : pathMaps.removeSection(i));
+      if (hasContent(block) && !confirm('Видалити разом із вмістом і рисунками?')) return;
+      const { list, index } = listOf(path);
+      list.splice(index, 1);
+      images = await remapImages(id, images, pathMaps.removeItem(path));
       touch(); render(); flush();
     } else if (act === 'img') {
       const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', multiple: true });

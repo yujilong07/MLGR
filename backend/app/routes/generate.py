@@ -130,10 +130,10 @@ async def generate_introduction_endpoint(
         raise HTTPException(status_code=404, detail="Not found")
 
     essay_context = None
-    if report.kind == "essay":
-        # The intro of an essay is written from the topic and what the sections cover
+    if report.kind in ("essay", "course"):
+        # The intro of an essay / a course work is written from the topic and what the sections cover
         essay_context = build_report_context(SimpleNamespace(
-            kind="essay", level=report.level, title=report.title, discipline=report.discipline, goal="",
+            kind=report.kind, level=report.level, title=report.title, discipline=report.discipline, goal="",
             introduction=None, sections=report.sections, images=[],
         ), limit=6000)
     source = essay_context or report.goal or ""

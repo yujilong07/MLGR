@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 Gender = Literal["m", "f"]
-Kind = Literal["lab", "essay"]
+Kind = Literal["lab", "essay", "course"]
 Level = Literal["university", "school"]
 EditorMode = Literal["form", "latex"]
 
@@ -30,6 +30,7 @@ class ReportCreate(BaseModel):
     sections: Optional[Any] = None
     conclusion: Optional[str] = None
     bibliography: Optional[list[str]] = None
+    meta: Optional[dict] = None
     editor_mode: EditorMode = "form"
     latex_source: Optional[str] = None
 
@@ -56,6 +57,7 @@ class ReportUpdate(BaseModel):
     sections: Optional[Any] = None
     conclusion: Optional[str] = None
     bibliography: Optional[list[str]] = None
+    meta: Optional[dict] = None
     editor_mode: Optional[EditorMode] = None
     latex_source: Optional[str] = None
 
@@ -83,6 +85,7 @@ class ReportResponse(BaseModel):
     sections: Optional[Any]
     conclusion: Optional[str]
     bibliography: Optional[list[str]]
+    meta: Optional[dict] = None
     editor_mode: str
     latex_source: Optional[str]
     # problems found while parsing latex_source (only in the PATCH response)

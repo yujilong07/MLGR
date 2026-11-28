@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
   <title>Редактор — MLGR</title>
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <div class="app-layout">
@@ -56,6 +56,7 @@
           <div class="seg seg-lg" role="radiogroup" aria-label="Тип роботи" id="kind-seg">
             <button type="button" data-kind="lab" role="radio">Лабораторна / практична</button>
             <button type="button" data-kind="essay" role="radio">Реферат</button>
+            <button type="button" data-kind="course" role="radio" class="uni-only">Курсова</button>
           </div>
           <p class="page-subtitle" id="kind-hint">Титулка, зміст і нумерація складуться автоматично</p>
         </div>
@@ -157,8 +158,8 @@
               <div class="form-group">
                 <label for="f-teacher" data-uni="Викладач" data-school="Вчитель">Викладач</label>
                 <div class="person-field">
-                  <input id="f-teacher" type="text" placeholder="Іваненко І. І.">
-                  <div class="seg" role="radiogroup" aria-label="Стать викладача" data-gender="teacher">
+                  <textarea id="f-teacher" rows="1" class="one-line" placeholder="Іваненко І. І."></textarea>
+                  <div class="seg not-course" role="radiogroup" aria-label="Стать викладача" data-gender="teacher">
                     <button type="button" data-g="m" role="radio" data-lab="Прийняв" data-essay="Перевірив" data-school="Перевірив">Прийняв</button>
                     <button type="button" data-g="f" role="radio" data-lab="Прийняла" data-essay="Перевірила" data-school="Перевірила">Прийняла</button>
                   </div>
@@ -166,7 +167,7 @@
               </div>
             </div>
             <div class="form-row pos-row">
-              <div class="form-group">
+              <div class="form-group not-course">
                 <label for="f-position" data-uni="Посада викладача" data-school="Посада вчителя">Посада викладача</label>
                 <input id="f-position" type="text" data-uni-ph="ас. каф. ШІ" data-school-ph="вчитель фізики">
               </div>
@@ -188,6 +189,61 @@
                 </button>
               </div>
               <textarea id="f-intro" rows="4" placeholder="Актуальність теми, мета реферату, що розглянуто. Формули в тексті — $x^2$."></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="card course-only" id="course-card">
+          <div class="panel-head">
+            <h2 class="panel-title">Курсова: завдання і план</h2>
+            <div class="seg" role="radiogroup" aria-label="Курсовий проєкт чи робота" id="course-type-seg">
+              <button type="button" data-ct="project">Проєкт</button>
+              <button type="button" data-ct="work">Робота</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label for="m-doc_code">Позначення документа <span class="text-muted">— якщо вимагає кафедра</span></label>
+              <input id="m-doc_code" type="text" placeholder="ХНУРЕ.КП.186.01.ПЗ">
+            </div>
+            <label class="check big"><input type="checkbox" id="m-task_sheet">
+              Додати сторінки «Завдання» і «Календарний план» <span class="text-muted">— одразу після титулки</span></label>
+            <div id="task-fields" class="form-stack hidden">
+              <div class="form-row three">
+                <div class="form-group"><label for="m-specialty">Спеціальність</label>
+                  <input id="m-specialty" type="text" placeholder="186 «Видавництво та поліграфія»"></div>
+                <div class="form-group"><label for="m-year_of_study">Курс</label>
+                  <input id="m-year_of_study" type="text" placeholder="2"></div>
+                <div class="form-group"><label for="m-semester">Семестр</label>
+                  <input id="m-semester" type="text" placeholder="3"></div>
+              </div>
+              <div class="form-group"><label for="m-student_full_dative">Кому видано завдання <span class="text-muted">— повне ПІБ у давальному відмінку</span></label>
+                <input id="m-student_full_dative" type="text" placeholder="Петренку Олегу Олеговичу"></div>
+              <div class="form-row">
+                <div class="form-group"><label for="m-deadline">Термін здачі</label>
+                  <input id="m-deadline" type="text" placeholder="27.12.2025 р."></div>
+                <div class="form-group"><label for="m-issue_date">Дата видачі завдання</label>
+                  <input id="m-issue_date" type="text" placeholder="02.09.2025 р."></div>
+              </div>
+              <div class="form-group"><label for="m-input_data">Вхідні дані</label>
+                <input id="m-input_data" type="text" placeholder="Варіант 3-3/9"></div>
+              <div class="form-group"><label for="m-contents">Зміст пояснювальної записки <span class="text-muted">— перелік питань</span></label>
+                <textarea id="m-contents" rows="2" placeholder="Частина 1: Динамічний аналіз механізму. Частина 2: Розрахунок на міцність."></textarea></div>
+              <div class="form-group"><label for="m-graphics">Перелік графічного матеріалу</label>
+                <textarea id="m-graphics" rows="1" placeholder="Лист 1 (Формат А1). Силовий аналіз механізму."></textarea></div>
+              <div class="form-group">
+                <div class="label-row"><label>Календарний план</label>
+                  <button type="button" class="btn btn-ghost btn-sm" data-caladd="defaults">Типові етапи</button></div>
+                <div id="calendar-box" class="calendar"></div>
+                <div class="flex gap-8">
+                  <button type="button" class="btn btn-ghost btn-sm" data-caladd="stage">+ Етап</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-caladd="sub">+ Підетап (а, б, в)</button>
+                </div>
+              </div>
+            </div>
+            <div class="form-group form-only">
+              <label for="m-abbreviations">Скорочення та умовні познаки <span class="text-muted">— необов’язково; «Термін – пояснення», кожне з нового рядка</span></label>
+              <textarea id="m-abbreviations" rows="2" placeholder="КП – курсовий проєкт"></textarea>
             </div>
           </div>
         </section>
@@ -225,6 +281,19 @@
           <div class="panel-body">
             <p class="text-sm text-muted">Кожне джерело з нового рядка — номери поставляться самі. У тексті посилайтеся як [1], [2].</p>
             <textarea id="f-refs" rows="3" placeholder="Гудфеллоу Я., Бенжіо Й., Курвілль А. Глибоке навчання. – К.: …, 2018. – 652 с."></textarea>
+          </div>
+        </section>
+
+        <section class="card form-only" id="appendix-card">
+          <div class="panel-head">
+            <h2 class="panel-title">Додатки</h2>
+            <button id="btn-add-app" class="btn btn-secondary btn-sm" type="button">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Додаток
+            </button>
+          </div>
+          <div class="panel-body">
+            <div id="appendix-container" class="form-stack"></div>
           </div>
         </section>
 
@@ -302,6 +371,6 @@
   </main>
 </div>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

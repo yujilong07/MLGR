@@ -1387,3 +1387,77 @@ html.still .lp-aurora i { opacity: 0.35; }
 .format-grid { --cols: 2; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
 .fx-card, .who-card, .step { min-width: 0; }
 @media (max-width: 960px) { .steps, .who, .formula-demos, .format-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ─────────────────────────────────────────────
+   Course work, tables, level-3 items, appendices
+───────────────────────────────────────────── */
+body[data-kind="course"] .lab-only,
+body[data-kind="course"] .not-course,
+body:not([data-kind="course"]) .course-only { display: none !important; }
+
+.form-row.three { grid-template-columns: 2fr 1fr 1fr; }
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 0.84rem; color: var(--fg-2); cursor: pointer; }
+.check input { width: auto; height: auto; box-shadow: none; }
+.check.big { font-size: 0.9rem; color: var(--fg); font-weight: 500; }
+
+.calendar { display: flex; flex-direction: column; gap: 4px; }
+.cal-head, .cal-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 130px 120px auto; gap: 6px; align-items: center; }
+.cal-head { font-size: 0.74rem; color: var(--fg-3); padding: 0 2px; }
+.cal-row input { height: 32px; padding: 4px 8px; font-size: 0.84rem; box-shadow: none; }
+.cal-row.sub input[data-calf="stage"] { margin-left: 22px; width: calc(100% - 22px); }
+.cal-no { font: 500 0.8rem var(--mono); color: var(--fg-2); text-align: center; }
+.cal-tools { display: flex; gap: 2px; }
+.cal-tools .pv-icon-btn { width: 26px; height: 26px; }
+.cal-tools .pv-icon-btn:hover { background: var(--bg-hover); }
+.cal-tools .danger:hover { color: var(--err); background: var(--err-bg); }
+@media (max-width: 860px) { .cal-head { display: none; } .cal-row { grid-template-columns: 22px 1fr; } .cal-row input:not([data-calf="stage"]) { grid-column: 2; } .cal-tools { grid-column: 2; } .form-row.three { grid-template-columns: 1fr; } }
+
+/* table block in the form */
+.tbl-box { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--bg-subtle); }
+.tbl-cap-row { display: flex; align-items: center; gap: 8px; }
+.tbl-no { flex-shrink: 0; font: 500 0.84rem var(--sans); color: var(--fg-2); }
+.tbl-cap { height: 32px; padding: 4px 8px; font-size: 0.86rem; }
+.tbl-scroll { overflow-x: auto; }
+.tbl-edit { border-collapse: collapse; min-width: 100%; }
+.tbl-edit td { padding: 0; border: 1px solid var(--border-strong); background: var(--bg); vertical-align: top; }
+.tbl-edit tr.is-head td { background: var(--bg-muted); }
+.tbl-edit tr.is-head textarea { font-weight: 600; text-align: center; }
+.tbl-edit textarea { display: block; width: 100%; min-width: 90px; min-height: 32px; padding: 6px 8px; border: none; border-radius: 0; box-shadow: none; background: transparent; font-size: 0.84rem; resize: none; }
+.tbl-edit textarea:focus { box-shadow: inset 0 0 0 2px var(--focus); }
+.tbl-edit td.tbl-x, .tbl-edit tr.tbl-coltools td { border: none; background: transparent; text-align: center; }
+.tbl-edit td.tbl-x { width: 28px; padding-left: 4px; vertical-align: middle; }
+.tbl-edit button { display: inline-grid; place-items: center; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent; color: var(--fg-3); cursor: pointer; opacity: 0; transition: opacity var(--t); }
+.tbl-edit button svg.icon { width: 12px; height: 12px; }
+.tbl-box:hover .tbl-edit button:not(:disabled) { opacity: 1; }
+.tbl-edit button:hover { color: var(--err); background: var(--err-bg); }
+.tbl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tbl-actions .btn { height: 28px; padding: 0 10px; }
+
+/* nested items in the form */
+.section-item.depth-3 { background: var(--bg); border-style: dashed; }
+.section-item.depth-3 .section-head { padding-left: 10px; }
+.ol-group { margin: 10px 8px 2px; font-size: 0.72rem; font-weight: 500; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* document view: course work */
+.is-course h1.dv-h { margin-bottom: calc(var(--line) * 2); }
+.is-course h2.dv-h, .is-course h3.dv-h { margin-top: var(--line); }
+h3.dv-h { text-align: left; text-indent: 1.25cm; }
+.dv-h.dv-app { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.dv-h.dv-app .dv-num { text-transform: uppercase; }
+.dv-h.dv-app .dv-app-title { text-transform: none; }
+.dv-block.depth-2, .dv-block.depth-3 { position: relative; }
+.dv-grid { width: 100%; border-collapse: collapse; font-size: 12pt; line-height: 1.25; }
+.dv-grid th, .dv-grid td { border: 1px solid #000; padding: 2pt 5pt; vertical-align: top; text-align: left; font-weight: normal; }
+.dv-grid th { font-weight: bold; text-align: center; }
+.dv-grid td.muted { color: #a1a1aa; text-align: center; font-family: var(--sans); font-size: 11px; }
+.dv-table { margin: 6pt 0; }
+.is-essay .dv-table { margin: var(--line) 0; }
+.dv-task p { text-indent: 0 !important; }
+.dv-task .c { text-align: center !important; }
+.dv-task .b { font-weight: bold; }
+.dv-task .dv-long { text-align: left !important; }
+.dv-task .dv-plain { text-align: left !important; }
+.dv-sign-tbl { width: 100%; margin-top: 12pt; border-collapse: collapse; }
+.dv-sign-tbl td { padding: 0 4pt; text-align: center; }
+.dv-sign-tbl td:first-child { text-align: left; white-space: nowrap; }
+.dv-sign-tbl .h td { font-size: 10pt; line-height: 12pt; }

@@ -15,7 +15,9 @@ import os
 import re
 import zipfile
 
-from app.services.content import item_blocks, split_inline
+from app.services.content import (
+    children, item_blocks, main_and_appendices, split_inline, table_header_rows, table_rows,
+)
 from app.services.report_outline import is_essay
 from app.services.templates import resolve_title_page
 
@@ -60,12 +62,40 @@ def _blocks_to_latex(item, figures) -> list[str]:
             out.append(f"\\begin{{lstlisting}}[language={lang}]\n{code}\n\\end{{lstlisting}}")
         elif kind == "formula" and (block.get("latex") or "").strip():
             out.append(f"\\begin{{equation}}\n  {block['latex'].strip()}\n\\end{{equation}}")
+        elif kind == "table":
+            out.append(_table_to_latex(block))
     for img in figures:
         out.append(
             "\\begin{figure}[h]\n  \\centering\n"
             f"  \\includegraphics[width=0.8\\textwidth]{{{_image_name(img)}}}\n"
             f"  \\caption{{{inline_to_latex(img.caption or '')}}}\n\\end{{figure}}"
         )
+    return out
+
+
+def _table_to_latex(block) -> str:
+    rows = table_rows(block)
+    if not rows:
+        return ""
+    header = table_header_rows(block, rows)
+    lines = []
+    for r, row in enumerate(rows):
+        lines.append("  " + " & ".join(inline_to_latex(c) for c in row) + " \\\\ \\hline")
+    spec = "|" + "l|" * len(rows[0])
+    caption = (block.get("caption") or "").strip()
+    head = f"  \\caption{{{inline_to_latex(caption)}}}\n" if caption else ""
+    del header  # the first row is the header; \hline after every row keeps it simple
+    return ("\\begin{table}[h]\n" + head + f"  \\begin{{tabular}}{{{spec}}}\n  \\hline\n"
+            + "\n".join(lines) + "\n  \\end{tabular}\n\\end{table}")
+
+
+def _item_to_latex(item, path, depth, by_path) -> list[str]:
+    cmd = {1: "section", 2: "subsection", 3: "subsubsection"}[depth]
+    out = [f"\\{cmd}{{{inline_to_latex((item.get('title') or '').strip())}}}"]
+    out += _blocks_to_latex(item, by_path.get(path, []))
+    if depth < 3:
+        for k, sub in enumerate(children(item)):
+            out += _item_to_latex(sub, f"{path}.{k}", depth + 1, by_path)
     return out
 
 
@@ -79,17 +109,18 @@ def to_latex_body(report, images=None) -> str:
         by_path.setdefault(img.section_path, []).append(img)
 
     parts = []
+    meta = getattr(report, "meta", None) or {}
+    abbreviations = (meta.get("abbreviations") or "").strip() if isinstance(meta, dict) else ""
+    if abbreviations and is_essay(report):
+        parts += ["\\section*{Скорочення та умовні познаки}", *_paragraphs(abbreviations)]
     if is_essay(report):
         parts += ["\\section*{Вступ}", *_paragraphs(getattr(report, "introduction", ""))]
     else:
         parts += ["\\section*{Мета роботи}", *_paragraphs(report.goal)]
 
-    for i, section in enumerate(report.sections or []):
-        parts.append(f"\\section{{{inline_to_latex((section.get('title') or '').strip())}}}")
-        parts += _blocks_to_latex(section, by_path.get(str(i), []))
-        for j, sub in enumerate(section.get("subsections") or []):
-            parts.append(f"\\subsection{{{inline_to_latex((sub.get('title') or '').strip())}}}")
-            parts += _blocks_to_latex(sub, by_path.get(f"{i}.{j}", []))
+    main, appendices = main_and_appendices(report.sections)
+    for idx, section in main:
+        parts += _item_to_latex(section, str(idx), 1, by_path)
 
     parts += ["\\section*{Висновки}", *_paragraphs(report.conclusion)]
 
@@ -97,6 +128,11 @@ def to_latex_body(report, images=None) -> str:
     if refs or is_essay(report):
         items = "\n".join(f"  \\bibitem{{{n}}} {escape_text(r.strip())}" for n, r in enumerate(refs, start=1))
         parts.append(f"\\begin{{thebibliography}}{{99}}\n{items}\n\\end{{thebibliography}}")
+
+    if appendices:
+        parts.append("\\appendix")
+        for idx, section in appendices:
+            parts += _item_to_latex(section, str(idx), 1, by_path)
     return "\n\n".join(parts) + "\n"
 
 
@@ -112,6 +148,9 @@ _SPECIAL_TITLES = {
     "висновки": "conclusion", "висновок": "conclusion",
     "перелік посилань": "references", "список літератури": "references", "література": "references",
     "список використаних джерел": "references", "список використаної літератури": "references",
+    "перелік джерел посилання": "references",
+    "скорочення та умовні позначення": "abbreviations", "скорочення та умовні познаки": "abbreviations", "перелік скорочень": "abbreviations",
+    "скорочення": "abbreviations",
 }
 _NOISE = re.compile(
     r"\\(maketitle|tableofcontents|newpage|clearpage|pagebreak|noindent|centering|"
@@ -180,7 +219,9 @@ class _Parser:
         self.references: list[str] = []
         self.sections: list[dict] = []
         self.figures: list[dict] = []        # {image_id, section_path, position, caption}
-        self.target = "front"                # front | conclusion | references | section
+        self.target = "front"                # front | abbreviations | conclusion | references | section
+        self.abbreviations: list[str] = []
+        self.in_appendix = False             # after \\appendix every \\section is an appendix
         self.code_blocks: list[tuple[str, str]] = []
 
     # warnings are shown to the user; keep each one once
@@ -230,18 +271,24 @@ class _Parser:
         return [p for p in (self.text_to_plain(para) for para in re.split(r"\n\s*\n", chunk)) if p]
 
     # ── targets ──
+    def _deepest(self):
+        """(item, path) of the innermost heading written so far."""
+        i = len(self.sections) - 1
+        item, path = self.sections[i], str(i)
+        while item["subsections"]:
+            k = len(item["subsections"]) - 1
+            item, path = item["subsections"][k], f"{path}.{k}"
+        return item, path
+
     def current_item(self):
         if self.target != "section" or not self.sections:
             return None
-        sec = self.sections[-1]
-        return sec["subsections"][-1] if sec["subsections"] else sec
+        return self._deepest()[0]
 
     def current_path(self):
         if self.target != "section" or not self.sections:
             return None
-        i = len(self.sections) - 1
-        subs = self.sections[-1]["subsections"]
-        return f"{i}.{len(subs) - 1}" if subs else str(i)
+        return self._deepest()[1]
 
     def add_block(self, block):
         item = self.current_item()
@@ -252,7 +299,8 @@ class _Parser:
                 item["blocks"].append(block)
             return
         # goal / introduction / conclusion are plain text fields
-        dest = {"front": self.front, "conclusion": self.conclusion, "references": self.references}[self.target]
+        dest = {"front": self.front, "conclusion": self.conclusion, "references": self.references,
+                "abbreviations": self.abbreviations}[self.target]
         if block["type"] == "text":
             if self.target == "references":
                 dest += [re.sub(r"^\s*\d+[.)]\s*", "", l) for l in block["text"].split("\n") if l.strip()]
@@ -278,19 +326,28 @@ class _Parser:
                 self.target = special
             return
         if level == 1:
-            if starred:
+            if starred and not self.in_appendix:
                 self.warn(f"\\section*{{{title}}} у документі буде пронумеровано як звичайний розділ")
-            self.sections.append({"title": title, "blocks": [], "subsections": []})
+            section = {"title": title, "blocks": [], "subsections": []}
+            if self.in_appendix:
+                section["appendix"] = True
+            self.sections.append(section)
             self.target = "section"
-        elif level == 2:
+        elif level in (2, 3):
             if not self.sections or self.target != "section":
-                self.warn("\\subsection до першого \\section — створено розділ без назви")
+                self.warn("Підрозділ до першого \\section — створено розділ без назви")
                 self.sections.append({"title": "", "blocks": [], "subsections": []})
                 self.target = "section"
-            self.sections[-1]["subsections"].append({"title": title, "blocks": []})
+            parent = self.sections[-1]
+            if level == 3:
+                if not parent["subsections"]:
+                    self.warn("\\subsubsection без \\subsection — створено підрозділ без назви")
+                    parent["subsections"].append({"title": "", "blocks": [], "subsections": []})
+                parent = parent["subsections"][-1]
+            parent["subsections"].append({"title": title, "blocks": [], "subsections": []})
         else:
-            # \subsubsection / \paragraph: our document has two heading levels
-            self.warn("\\subsubsection і \\paragraph стають звичайним абзацом")
+            # \paragraph: the document has three heading levels
+            self.warn("\\paragraph стає звичайним абзацом")
             self.add_block({"type": "text", "text": title})
 
     def figure(self, body):
@@ -315,6 +372,33 @@ class _Parser:
         position = sum(1 for f in self.figures if f["section_path"] == path)
         self.figures.append({"image_id": int(m.group(1)), "section_path": path, "position": position,
                              "caption": caption})
+
+    def table(self, env, body):
+        """table (with \\caption) around a tabular, or a bare tabular / longtable."""
+        caption = ""
+        if env.startswith("table"):
+            cap = body.find("\\caption")
+            if cap != -1:
+                caption = self.text_to_plain(_braced_arg(body, cap + len("\\caption"))[0])
+            inner = re.search(r"\\begin\{(tabularx?|longtable|tabular\*)\}(.*?)\\end\{\1\}", body, flags=re.S)
+            if not inner:
+                self.add_text(_flatten_env(body))
+                return
+            env, body = inner.group(1), inner.group(2)
+        # column spec ({|l|c|}; tabularx has the width first)
+        pos = 0
+        for _ in range(2 if env in ("tabularx", "tabular*") else 1):
+            _, pos = _braced_arg(body, pos)
+        body = body[pos:]
+        body = re.sub(r"\\(hline|toprule|midrule|bottomrule|endhead|endfirsthead|endfoot|endlastfoot)\b|\\cline\{[^{}]*\}", " ", body)
+        rows = []
+        for raw in re.split(r"\\\\(?:\[[^\]]*\])?", body):
+            if not raw.strip():
+                continue
+            cells = [self.text_to_plain(c) for c in re.split(r"(?<!\\)&", raw)]
+            rows.append(cells)
+        if rows:
+            self.add_block({"type": "table", "caption": caption, "rows": rows, "header": 1})
 
     def list_env(self, env, body):
         items = [i.strip() for i in re.split(r"\\item\b", body)[1:]]
@@ -342,6 +426,7 @@ class _Parser:
         r"|\\\[|\$\$"
         r"|\x00CODE(\d+)\x00"
         r"|\\includegraphics"
+        r"|\\appendix\b"
     )
 
     def run(self, source: str):
@@ -403,11 +488,10 @@ class _Parser:
                     continue
                 elif env in ("center", "flushleft", "flushright", "quote", "quotation"):
                     self.add_text(body)
+                elif env in ("table", "table*", "tabular", "tabularx", "tabular*", "longtable"):
+                    self.table(env, body)
                 else:
-                    if env in ("table", "tabular", "table*", "longtable", "tabularx"):
-                        self.warn("Таблиці поки не підтримуються — рядки таблиці збережено як текст «a | b»")
-                    else:
-                        self.warn(f"Оточення {env} не підтримується — збережено лише його текст")
+                    self.warn(f"Оточення {env} не підтримується — збережено лише його текст")
                     self.add_text(_flatten_env(body))
             elif m.group(0) in ("\\[", "$$"):
                 closer = "\\]" if m.group(0) == "\\[" else "$$"
@@ -419,6 +503,8 @@ class _Parser:
             elif m.group(4) is not None:  # code
                 lang, code = self.code_blocks[int(m.group(4))]
                 self.add_block({"type": "code", "code": code, "language": lang})
+            elif m.group(0).startswith("\\appendix"):
+                self.in_appendix = True
             else:  # bare \includegraphics in the text
                 name, pos = _braced_arg(source, pos)
                 self.place_image(name, None)
@@ -426,12 +512,14 @@ class _Parser:
     def result(self):
         def clean(item):
             item["blocks"] = [b for b in item["blocks"] if not (b["type"] == "text" and not b["text"].strip())]
+            item["subsections"] = [clean(sub) for sub in item.get("subsections") or []]
             return item
-        sections = [{**clean(s), "subsections": [clean(sub) for sub in s["subsections"]]} for s in self.sections]
+        sections = [clean(s) for s in self.sections]
         front = "\n".join(l for l in self.front if l.strip())
         return {
             "sections": sections,
-            "goal" if self.kind != "essay" else "introduction": front,
+            "abbreviations": "\n".join(l for l in self.abbreviations if l.strip()),
+            "goal" if self.kind not in ("essay", "course") else "introduction": front,
             "conclusion": "\n".join(l for l in self.conclusion if l.strip()),
             "bibliography": self.references,
             "figures": self.figures,
@@ -482,6 +570,19 @@ _PREAMBLE = r"""% Згенеровано MLGR. Компілювати XeLaTeX а
 \titleformat{\subsection}{\normalfont\bfseries}{\hspace{1.25cm}\thesubsection}{0.5em}{}
 \titlespacing*{\section}{0pt}{0pt}{@@heading_after@@}
 \titlespacing*{\subsection}{0pt}{0pt}{@@heading_after@@}
+\titleformat{\subsubsection}{\normalfont\bfseries}{\hspace{1.25cm}\thesubsubsection}{0.5em}{}
+\titlespacing*{\subsubsection}{0pt}{0pt}{0pt}
+\captionsetup[table]{name=Таблиця, justification=raggedright, singlelinecheck=false, position=top}
+% Appendices: "ДОДАТОК А" with the name on the next line, always from a new page
+% (letters of ДСТУ 3008:2015: no Ґ, Є, З, І, Ї, Й, О, Ч, Ь)
+\newcommand{\ukrappendix}[1]{\ifcase#1\or А\or Б\or В\or Г\or Д\or Е\or Ж\or И\or К\or Л\or М\or Н\or П\or Р\or С\or Т\or У\or Ф\or Х\or Ц\or Ш\or Щ\or Ю\or Я\fi}
+\providecommand{\sectionbreak}{}
+\makeatletter
+\g@addto@macro\appendix{%
+  \titleformat{\section}[display]{\normalfont\bfseries\filcenter}{ДОДАТОК \thesection}{0pt}{}%
+  \renewcommand{\thesection}{\ukrappendix{\value{section}}}%
+  \renewcommand{\sectionbreak}{\clearpage}}
+\makeatother
 @@section_break@@
 \usepackage{fancyhdr}
 \pagestyle{fancy}
@@ -547,8 +648,9 @@ def build_tex_document(report, body: str) -> str:
     preamble = _PREAMBLE
     for key, value in {
         "heading_after": "\\baselineskip" if essay else "0pt",
-        "section_break": "\\newcommand{\\sectionbreak}{\\clearpage}" if essay else "",
-        "numbering": ("\\counterwithin{figure}{section}\n"
+        # \sectionbreak is already \providecommand-ed for appendices above
+        "section_break": "\\renewcommand{\\sectionbreak}{\\clearpage}" if essay else "",
+        "numbering": ("\\counterwithin{figure}{section}\n\\counterwithin{table}{section}\n"
                                   # the lstlisting counter only exists from \begin{document}
                                   "\\AtBeginDocument{\\counterwithin{lstlisting}{section}}\n" if essay else "")
                      + "\\numberwithin{equation}{section}",
